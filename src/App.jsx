@@ -167,6 +167,21 @@ async function safeSet(key, value) {
     return true;
   } catch (e) { console.error("storage set error", e); return false; }
 }
+async function safeDelete(key) {
+  try {
+    const { error } = await supabase.from("app_storage").delete().eq("key", key);
+    if (error) throw error;
+    return true;
+  } catch (e) { console.error("storage delete error", e); return false; }
+}
+// Trae todas las entradas cuya clave empieza con un prefijo (ej: todas las cargas de insumos de un día)
+async function safeListPrefix(prefix) {
+  try {
+    const { data, error } = await supabase.from("app_storage").select("key,value").like("key", `${prefix}%`);
+    if (error) throw error;
+    return data || [];
+  } catch (e) { console.error("storage list error", e); return []; }
+}
 async function testStorage() {
   try {
     const testKey = "diagnostico-guardado";
@@ -178,31 +193,31 @@ async function testStorage() {
   } catch (e) { return false; }
 }
 async function registrarAuditoria(fecha, responsable, accion, detalle) {
-  const raw = await safeGet(`auditoria-${fecha}`);
-  const arr = raw ? JSON.parse(raw) : [];
-  arr.push({ id: Date.now().toString() + Math.random().toString(36).slice(2, 6), hora: horaAhora(), responsable, accion, detalle });
-  await safeSet(`auditoria-${fecha}`, JSON.stringify(arr));
+  const entry = { id: Date.now().toString() + Math.random().toString(36).slice(2, 6), hora: horaAhora(), responsable, accion, detalle };
+  await safeSet(`auditoria-${fecha}-${entry.id}`, JSON.stringify(entry));
 }
 async function leerStock() {
   const raw = await safeGet("stock-insumos");
   return raw ? JSON.parse(raw) : {};
 }
-// Ajusta el stock de UN insumo (usado para cargas/correcciones de Insumos)
+// Ajusta el stock de UN insumo de forma atómica en la base de datos (evita que dos cargas simultáneas se pisen)
 async function ajustarStock(insumoId, delta) {
-  const stock = await leerStock();
-  stock[insumoId] = round2((stock[insumoId] || 0) + delta);
-  const ok = await safeSet("stock-insumos", JSON.stringify(stock));
-  return ok ? stock : null;
+  try {
+    const { error } = await supabase.rpc("incrementar_stock", { p_insumo_id: insumoId, p_delta: delta });
+    if (error) throw error;
+    return await leerStock();
+  } catch (e) { console.error("ajustarStock error", e); return null; }
 }
-// Aplica el descuento (o reversión) de TODA la receta de un producto, según cantidad producida
+// Aplica el descuento (o reversión) de TODA la receta de un producto, según cantidad producida — cada insumo se ajusta atómicamente
 async function aplicarStockPorProduccion(recetario, productoId, cantidadProducida, signo) {
   const receta = recetario[productoId] || [];
-  const stock = await leerStock();
-  for (const ing of receta) {
-    stock[ing.insumoId] = round2((stock[ing.insumoId] || 0) + signo * ing.cantidad * cantidadProducida);
-  }
-  const ok = await safeSet("stock-insumos", JSON.stringify(stock));
-  return ok ? stock : null;
+  try {
+    for (const ing of receta) {
+      const { error } = await supabase.rpc("incrementar_stock", { p_insumo_id: ing.insumoId, p_delta: signo * ing.cantidad * cantidadProducida });
+      if (error) throw error;
+    }
+    return await leerStock();
+  } catch (e) { console.error("aplicarStockPorProduccion error", e); return null; }
 }
 
 // ================= MIGRACIÓN AUTOMÁTICA (corre una sola vez) =================
@@ -348,8 +363,8 @@ export default function App() {
 
   async function refrescarDatosHoy() {
     const tk = todayKey();
-    const insRaw = await safeGet(`insumos-${tk}`); setInsumosHoy(insRaw ? JSON.parse(insRaw) : []);
-    const prodRaw = await safeGet(`produccion-${tk}`); setProduccionHoy(prodRaw ? JSON.parse(prodRaw) : []);
+    const insList = await safeListPrefix(`insumo-entrada-${tk}-`); setInsumosHoy(insList.map((r) => r.value));
+    const prodList = await safeListPrefix(`produccion-entrada-${tk}-`); setProduccionHoy(prodList.map((r) => r.value));
     const stockRaw = await safeGet("stock-insumos"); setStockInsumos(stockRaw ? JSON.parse(stockRaw) : {});
     const cierreRaw = await safeGet(`cierre-${tk}`); setCierreHoy(cierreRaw ? JSON.parse(cierreRaw) : null);
   }
@@ -396,8 +411,8 @@ export default function App() {
     if (view !== "resumen") return;
     (async () => {
       setResumenLoading(true);
-      const insRaw = await safeGet(`insumos-${resumenFecha}`); setResumenInsumos(insRaw ? JSON.parse(insRaw) : []);
-      const prodRaw = await safeGet(`produccion-${resumenFecha}`); setResumenProduccion(prodRaw ? JSON.parse(prodRaw) : []);
+      const insList = await safeListPrefix(`insumo-entrada-${resumenFecha}-`); setResumenInsumos(insList.map((r) => r.value));
+      const prodList = await safeListPrefix(`produccion-entrada-${resumenFecha}-`); setResumenProduccion(prodList.map((r) => r.value));
       const cierreRaw = await safeGet(`cierre-${resumenFecha}`); setResumenCierre(cierreRaw ? JSON.parse(cierreRaw) : null);
       setResumenLoading(false);
     })();
@@ -424,9 +439,8 @@ export default function App() {
 
   async function guardarInsumo(entry) {
     const previos = insumosHoy;
-    const actualizados = [...insumosHoy, entry];
-    setInsumosHoy(actualizados);
-    const ok1 = await safeSet(`insumos-${todayKey()}`, JSON.stringify(actualizados));
+    setInsumosHoy([...insumosHoy, entry]);
+    const ok1 = await safeSet(`insumo-entrada-${todayKey()}-${entry.id}`, JSON.stringify(entry));
     const nuevoStock = ok1 ? await ajustarStock(entry.productoId, entry.cantidad) : null;
     if (!ok1 || !nuevoStock) {
       setInsumosHoy(previos);
@@ -440,17 +454,15 @@ export default function App() {
   async function deshacerInsumo(id) {
     const entry = insumosHoy.find((e) => e.id === id);
     const previos = insumosHoy;
-    const actualizados = insumosHoy.filter((e) => e.id !== id);
-    setInsumosHoy(actualizados);
-    const ok1 = await safeSet(`insumos-${todayKey()}`, JSON.stringify(actualizados));
+    setInsumosHoy(insumosHoy.filter((e) => e.id !== id));
+    const ok1 = await safeDelete(`insumo-entrada-${todayKey()}-${id}`);
     if (!ok1) { setInsumosHoy(previos); setStorageOk(false); showStampError("NO SE PUDO DESHACER"); return; }
     if (entry) { const nuevoStock = await ajustarStock(entry.productoId, -entry.cantidad); if (nuevoStock) setStockInsumos(nuevoStock); else setStorageOk(false); }
   }
   async function guardarProduccion(entry) {
     const previos = produccionHoy;
-    const actualizados = [...produccionHoy, entry];
-    setProduccionHoy(actualizados);
-    const ok1 = await safeSet(`produccion-${todayKey()}`, JSON.stringify(actualizados));
+    setProduccionHoy([...produccionHoy, entry]);
+    const ok1 = await safeSet(`produccion-entrada-${todayKey()}-${entry.id}`, JSON.stringify(entry));
     const nuevoStock = ok1 ? await aplicarStockPorProduccion(recetario, entry.productoId, entry.cantidad, -1) : null;
     if (!ok1 || !nuevoStock) {
       setProduccionHoy(previos);
@@ -464,9 +476,8 @@ export default function App() {
   async function deshacerProduccion(id) {
     const entry = produccionHoy.find((e) => e.id === id);
     const previos = produccionHoy;
-    const actualizados = produccionHoy.filter((e) => e.id !== id);
-    setProduccionHoy(actualizados);
-    const ok1 = await safeSet(`produccion-${todayKey()}`, JSON.stringify(actualizados));
+    setProduccionHoy(produccionHoy.filter((e) => e.id !== id));
+    const ok1 = await safeDelete(`produccion-entrada-${todayKey()}-${id}`);
     if (!ok1) { setProduccionHoy(previos); setStorageOk(false); showStampError("NO SE PUDO DESHACER"); return; }
     if (entry) { const nuevoStock = await aplicarStockPorProduccion(recetario, entry.productoId, entry.cantidad, 1); if (nuevoStock) setStockInsumos(nuevoStock); else setStorageOk(false); }
   }
@@ -952,8 +963,8 @@ function Detalle({ fecha, adminActual, recetario, onBack }) {
 
   async function cargar() {
     setLoading(true);
-    const insRaw = await safeGet(`insumos-${fecha}`); setInsumos(insRaw ? JSON.parse(insRaw) : []);
-    const prodRaw = await safeGet(`produccion-${fecha}`); setProduccion(prodRaw ? JSON.parse(prodRaw) : []);
+    const insList = await safeListPrefix(`insumo-entrada-${fecha}-`); setInsumos(insList.map((r) => r.value));
+    const prodList = await safeListPrefix(`produccion-entrada-${fecha}-`); setProduccion(prodList.map((r) => r.value));
     setLoading(false);
   }
   useEffect(() => { cargar(); }, [fecha]);
@@ -964,13 +975,14 @@ function Detalle({ fecha, adminActual, recetario, onBack }) {
   async function confirmar() {
     if (!motivo.trim()) return;
     const lista = editando.tipo === "insumo" ? insumos : produccion;
-    const key = editando.tipo === "insumo" ? `insumos-${fecha}` : `produccion-${fecha}`;
+    const prefijo = editando.tipo === "insumo" ? "insumo-entrada" : "produccion-entrada";
+    const key = `${prefijo}-${fecha}-${editando.id}`;
     const entry = lista.find((e) => e.id === editando.id);
     if (!entry) return;
 
     if (editando.accion === "eliminar") {
+      await safeDelete(key);
       const actualizados = lista.filter((e) => e.id !== editando.id);
-      await safeSet(key, JSON.stringify(actualizados));
       editando.tipo === "insumo" ? setInsumos(actualizados) : setProduccion(actualizados);
       if (editando.tipo === "insumo") await ajustarStock(entry.productoId, -entry.cantidad);
       else await aplicarStockPorProduccion(recetario, entry.productoId, entry.cantidad, 1);
@@ -979,8 +991,9 @@ function Detalle({ fecha, adminActual, recetario, onBack }) {
     } else {
       const nuevaCantidad = Number(valorEdit);
       if (!nuevaCantidad || nuevaCantidad <= 0) return;
-      const actualizados = lista.map((e) => (e.id === editando.id ? { ...e, cantidad: nuevaCantidad } : e));
-      await safeSet(key, JSON.stringify(actualizados));
+      const entryActualizado = { ...entry, cantidad: nuevaCantidad };
+      await safeSet(key, JSON.stringify(entryActualizado));
+      const actualizados = lista.map((e) => (e.id === editando.id ? entryActualizado : e));
       editando.tipo === "insumo" ? setInsumos(actualizados) : setProduccion(actualizados);
       const delta = nuevaCantidad - entry.cantidad;
       if (editando.tipo === "insumo") await ajustarStock(entry.productoId, delta);
@@ -1049,7 +1062,7 @@ function Detalle({ fecha, adminActual, recetario, onBack }) {
 function Historial({ fecha, onBack }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
-  useEffect(() => { (async () => { setLoading(true); const raw = await safeGet(`auditoria-${fecha}`); setItems(raw ? JSON.parse(raw).reverse() : []); setLoading(false); })(); }, [fecha]);
+  useEffect(() => { (async () => { setLoading(true); const list = await safeListPrefix(`auditoria-${fecha}-`); setItems(list.map((r) => r.value).sort((a, b) => (a.hora < b.hora ? 1 : -1))); setLoading(false); })(); }, [fecha]);
   return (
     <div>
       <Header title="Historial de cambios" subtitle={formatFecha(fecha)} onBack={onBack} />
