@@ -486,6 +486,10 @@ export default function App() {
     }
     return ok;
   }
+  async function actualizarCostoInsumo(insumoId, nuevoCosto) {
+    const actualizados = productos.map((p) => (p.id === insumoId ? { ...p, costo: round2(nuevoCosto) } : p));
+    await guardarCatalogo("productos", actualizados);
+  }
   async function guardarRecetario(productoId, nuevaLista) {
     const previo = recetario;
     const nuevo = { ...recetario, [productoId]: nuevaLista };
@@ -553,7 +557,7 @@ export default function App() {
           <PinScreen pinInput={pinInput} setPinInput={setPinInput} responsableInput={responsableInput} setResponsableInput={setResponsableInput} pinError={pinError} confirmPin={confirmPin} onBack={() => setView("home")} />
         )}
         {view === "insumos" && (
-          <CargarInsumos productos={productos.filter((p) => p.tipo === "insumo")} personas={personas} entradas={insumosHoy} cierreHoy={cierreHoy} stock={stockInsumos} onGuardar={guardarInsumo} onDeshacer={deshacerInsumo} onBack={() => setView("home")} />
+          <CargarInsumos productos={productos.filter((p) => p.tipo === "insumo")} personas={personas} entradas={insumosHoy} cierreHoy={cierreHoy} stock={stockInsumos} onGuardar={guardarInsumo} onDeshacer={deshacerInsumo} onActualizarCosto={actualizarCostoInsumo} onBack={() => setView("home")} />
         )}
         {view === "produccion" && (
           <CargarProduccion productos={productos.filter((p) => p.tipo === "comida")} personas={personas} bufets={bufets} entradas={produccionHoy} cierreHoy={cierreHoy} recetario={recetario} insumosCatalogo={insumosCatalogo} onGuardar={guardarProduccion} onDeshacer={deshacerProduccion} onBack={() => setView("home")} />
@@ -693,12 +697,14 @@ function BloqueoCierre({ cierreHoy, onBack }) {
 }
 
 // ================= CARGAR INSUMOS =================
-function CargarInsumos({ productos, personas, entradas, cierreHoy, stock, onGuardar, onDeshacer, onBack }) {
+function CargarInsumos({ productos, personas, entradas, cierreHoy, stock, onGuardar, onDeshacer, onActualizarCosto, onBack }) {
   const [personaId, setPersonaId] = useState(personas[0]?.id || "");
   const [productoId, setProductoId] = useState(productos[0]?.id || "");
   const [cantidad, setCantidad] = useState(1);
+  const [montoBoleta, setMontoBoleta] = useState("");
   const producto = productos.find((p) => p.id === productoId);
   const stockActual = producto ? round2(stock[producto.id] || 0) : 0;
+  const costoCalculado = montoBoleta && cantidad ? Number(montoBoleta) / Number(cantidad) : null;
 
   if (cierreHoy && cierreHoy.cerrado) return <BloqueoCierre cierreHoy={cierreHoy} onBack={onBack} />;
   if (productos.length === 0) return <EmptyCatalog onBack={onBack} tipo="insumos" />;
@@ -707,7 +713,11 @@ function CargarInsumos({ productos, personas, entradas, cierreHoy, stock, onGuar
     if (!personaId || !producto || !cantidad || cantidad <= 0) return;
     const persona = personas.find((x) => x.id === personaId);
     onGuardar({ id: Date.now().toString(), personaId, personaNombre: persona?.nombre || "", productoId, productoNombre: producto.nombre, cantidad: Number(cantidad), unidad: producto.unidad, hora: horaAhora() });
+    if (montoBoleta && Number(montoBoleta) > 0) {
+      onActualizarCosto(producto.id, Number(montoBoleta) / Number(cantidad));
+    }
     setCantidad(1);
+    setMontoBoleta("");
   }
 
   return (
@@ -723,6 +733,15 @@ function CargarInsumos({ productos, personas, entradas, cierreHoy, stock, onGuar
           </div>
         )}
         <Field label={`Cantidad (${producto?.unidad || ""})`}><Stepper value={cantidad} setValue={setCantidad} /></Field>
+        <Field label="¿Cuánto pagaste por esta compra? (boleta, opcional)">
+          <input type="number" value={montoBoleta} onChange={(e) => setMontoBoleta(e.target.value)} className="w-full rounded-lg px-3 py-2.5" style={{ border: `1px solid ${C.line}`, fontSize: 15 }} placeholder="$ ej: 3500" />
+        </Field>
+        {costoCalculado != null && (
+          <div className="rounded-xl px-3 py-2 flex items-center justify-between" style={{ background: "#E3EFE8" }}>
+            <span style={{ fontSize: 12.5, color: C.tealDark, fontWeight: 600 }}>Queda guardado a</span>
+            <span className="ticket-num" style={{ fontSize: 14, fontWeight: 700, color: C.tealDark }}>{money(costoCalculado)} / {producto?.unidad}</span>
+          </div>
+        )}
         <button onClick={guardar} className="w-full rounded-xl py-4 display-font flex items-center justify-center gap-2" style={{ background: C.teal, color: C.white, fontSize: 22, letterSpacing: "0.05em" }}><Check size={22} /> Guardar</button>
       </div>
       <EntradasHoy titulo="Insumos cargados hoy" entradas={entradas} onDeshacer={onDeshacer} />
@@ -1133,11 +1152,6 @@ function ProductosConfig({ productos, onGuardar }) {
     onGuardar(productos.map((p) => (p.id === id ? { ...p, costo: Number(costoValor) || 0 } : p)));
     setCostoEditando(null);
   }
-  function costoPorUnidad(p) {
-    const rinde = Number(p.rendimiento);
-    if (!p.costo || !rinde) return null;
-    return p.costo / rinde;
-  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -1158,7 +1172,7 @@ function ProductosConfig({ productos, onGuardar }) {
               <Field label="Cómo lo comprás"><input value={unidadCompra} onChange={(e) => setUnidadCompra(e.target.value)} className="w-full rounded-lg px-3 py-2" style={{ border: `1px solid ${C.line}` }} placeholder="Ej: Kilogramo (kg)" /></Field>
               <Field label="Cuánto rinde"><input value={rendimiento} onChange={(e) => setRendimiento(e.target.value)} className="w-full rounded-lg px-3 py-2" style={{ border: `1px solid ${C.line}` }} placeholder="Ej: 1000" /></Field>
             </div>
-            <Field label="Costo de la compra (lo que pagaste en la boleta por esa unidad completa)"><input type="number" value={costo} onChange={(e) => setCosto(e.target.value)} className="w-full rounded-lg px-3 py-2" style={{ border: `1px solid ${C.line}` }} placeholder="$ ej: 3500 si pagaste $3500 por el kilo" /></Field>
+            <Field label={`Costo por ${unidad} (opcional — también se puede cargar después, desde Cargar Insumos)`}><input type="number" value={costo} onChange={(e) => setCosto(e.target.value)} className="w-full rounded-lg px-3 py-2" style={{ border: `1px solid ${C.line}` }} placeholder="$" /></Field>
             <Field label="Notas (opcional)"><input value={notas} onChange={(e) => setNotas(e.target.value)} className="w-full rounded-lg px-3 py-2" style={{ border: `1px solid ${C.line}` }} placeholder="Mermas, cocción, etc." /></Field>
           </>
         )}
@@ -1167,7 +1181,6 @@ function ProductosConfig({ productos, onGuardar }) {
       <div className="flex flex-col gap-2">
         {productos.map((p) => {
           const editandoEste = costoEditando === p.id;
-          const porUnidad = costoPorUnidad(p);
           return (
             <div key={p.id} className="flex flex-col gap-2 rounded-xl p-3" style={{ background: C.white, border: `1px solid ${C.line}` }}>
               <div className="flex items-center justify-between">
@@ -1176,7 +1189,7 @@ function ProductosConfig({ productos, onGuardar }) {
                   <div style={{ fontSize: 12, color: C.inkSoft }}>
                     {p.tipo === "comida"
                       ? `Venta ${money(p.precioVenta)} · Costo ${money(p.costo)}`
-                      : `${p.unidadCompra || "?"} → ${p.rendimiento || "?"} ${p.unidad}${porUnidad != null ? ` · ${money(porUnidad)}/${p.unidad}` : " · sin costo cargado"}`}
+                      : `${p.unidadCompra || "?"} → ${p.rendimiento || "?"} ${p.unidad}${p.costo ? ` · ${money(p.costo)}/${p.unidad}` : " · sin costo cargado"}`}
                   </div>
                 </div>
                 {p.tipo === "insumo" && !editandoEste && (
@@ -1188,7 +1201,7 @@ function ProductosConfig({ productos, onGuardar }) {
               </div>
               {editandoEste && (
                 <div className="flex items-center gap-2 pt-2" style={{ borderTop: `1px dashed ${C.line}` }}>
-                  <Field label={`Costo de la compra completa (por ${p.unidadCompra || "unidad de compra"})`}>
+                  <Field label={`Costo por ${p.unidad}`}>
                     <input type="number" value={costoValor} onChange={(e) => setCostoValor(e.target.value)} className="w-full rounded-lg px-3 py-2" style={{ border: `1px solid ${C.line}` }} placeholder="$" autoFocus />
                   </Field>
                   <button onClick={() => guardarCosto(p.id)} className="p-2.5 rounded-full flex-shrink-0" style={{ background: C.teal, color: C.white }}><Save size={16} /></button>
