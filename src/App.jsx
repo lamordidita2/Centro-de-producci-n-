@@ -1118,6 +1118,8 @@ function ProductosConfig({ productos, onGuardar }) {
   const [unidadCompra, setUnidadCompra] = useState("");
   const [rendimiento, setRendimiento] = useState("");
   const [notas, setNotas] = useState("");
+  const [costoEditando, setCostoEditando] = useState(null);
+  const [costoValor, setCostoValor] = useState("");
 
   function agregar() {
     if (!nombre.trim()) return;
@@ -1126,6 +1128,16 @@ function ProductosConfig({ productos, onGuardar }) {
     setNombre(""); setPrecioVenta(""); setCosto(""); setUnidadCompra(""); setRendimiento(""); setNotas("");
   }
   function borrar(id) { onGuardar(productos.filter((p) => p.id !== id)); }
+  function abrirEdicionCosto(p) { setCostoEditando(p.id); setCostoValor(String(p.costo || "")); }
+  function guardarCosto(id) {
+    onGuardar(productos.map((p) => (p.id === id ? { ...p, costo: Number(costoValor) || 0 } : p)));
+    setCostoEditando(null);
+  }
+  function costoPorUnidad(p) {
+    const rinde = Number(p.rendimiento);
+    if (!p.costo || !rinde) return null;
+    return p.costo / rinde;
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -1146,21 +1158,46 @@ function ProductosConfig({ productos, onGuardar }) {
               <Field label="Cómo lo comprás"><input value={unidadCompra} onChange={(e) => setUnidadCompra(e.target.value)} className="w-full rounded-lg px-3 py-2" style={{ border: `1px solid ${C.line}` }} placeholder="Ej: Kilogramo (kg)" /></Field>
               <Field label="Cuánto rinde"><input value={rendimiento} onChange={(e) => setRendimiento(e.target.value)} className="w-full rounded-lg px-3 py-2" style={{ border: `1px solid ${C.line}` }} placeholder="Ej: 1000" /></Field>
             </div>
+            <Field label="Costo de la compra (lo que pagaste en la boleta por esa unidad completa)"><input type="number" value={costo} onChange={(e) => setCosto(e.target.value)} className="w-full rounded-lg px-3 py-2" style={{ border: `1px solid ${C.line}` }} placeholder="$ ej: 3500 si pagaste $3500 por el kilo" /></Field>
             <Field label="Notas (opcional)"><input value={notas} onChange={(e) => setNotas(e.target.value)} className="w-full rounded-lg px-3 py-2" style={{ border: `1px solid ${C.line}` }} placeholder="Mermas, cocción, etc." /></Field>
           </>
         )}
         <button onClick={agregar} className="rounded-lg py-2.5 flex items-center justify-center gap-1" style={{ background: C.teal, color: C.white, fontWeight: 600, fontSize: 14 }}><Plus size={16} /> Agregar producto</button>
       </div>
       <div className="flex flex-col gap-2">
-        {productos.map((p) => (
-          <div key={p.id} className="flex items-center justify-between rounded-xl p-3" style={{ background: C.white, border: `1px solid ${C.line}` }}>
-            <div>
-              <div style={{ fontSize: 14, fontWeight: 600 }}>{p.nombre}</div>
-              <div style={{ fontSize: 12, color: C.inkSoft }}>{p.tipo === "comida" ? `Venta ${money(p.precioVenta)} · Costo ${money(p.costo)}` : `${p.unidadCompra || "?"} → ${p.rendimiento || "?"} ${p.unidad}`}</div>
+        {productos.map((p) => {
+          const editandoEste = costoEditando === p.id;
+          const porUnidad = costoPorUnidad(p);
+          return (
+            <div key={p.id} className="flex flex-col gap-2 rounded-xl p-3" style={{ background: C.white, border: `1px solid ${C.line}` }}>
+              <div className="flex items-center justify-between">
+                <div className="min-w-0 flex-1">
+                  <div style={{ fontSize: 14, fontWeight: 600 }}>{p.nombre}</div>
+                  <div style={{ fontSize: 12, color: C.inkSoft }}>
+                    {p.tipo === "comida"
+                      ? `Venta ${money(p.precioVenta)} · Costo ${money(p.costo)}`
+                      : `${p.unidadCompra || "?"} → ${p.rendimiento || "?"} ${p.unidad}${porUnidad != null ? ` · ${money(porUnidad)}/${p.unidad}` : " · sin costo cargado"}`}
+                  </div>
+                </div>
+                {p.tipo === "insumo" && !editandoEste && (
+                  <button onClick={() => abrirEdicionCosto(p)} className="px-2.5 py-1.5 rounded-full flex-shrink-0" style={{ background: p.costo ? C.paperDark : "#FDECC8", color: C.inkSoft, fontSize: 12, fontWeight: 600 }}>
+                    {p.costo ? money(p.costo) : "Cargar costo"}
+                  </button>
+                )}
+                <button onClick={() => borrar(p.id)} className="p-2 rounded-full flex-shrink-0" style={{ color: C.red }}><Trash2 size={17} /></button>
+              </div>
+              {editandoEste && (
+                <div className="flex items-center gap-2 pt-2" style={{ borderTop: `1px dashed ${C.line}` }}>
+                  <Field label={`Costo de la compra completa (por ${p.unidadCompra || "unidad de compra"})`}>
+                    <input type="number" value={costoValor} onChange={(e) => setCostoValor(e.target.value)} className="w-full rounded-lg px-3 py-2" style={{ border: `1px solid ${C.line}` }} placeholder="$" autoFocus />
+                  </Field>
+                  <button onClick={() => guardarCosto(p.id)} className="p-2.5 rounded-full flex-shrink-0" style={{ background: C.teal, color: C.white }}><Save size={16} /></button>
+                  <button onClick={() => setCostoEditando(null)} className="p-2.5 rounded-full flex-shrink-0" style={{ background: C.paperDark, color: C.ink }}><X size={16} /></button>
+                </div>
+              )}
             </div>
-            <button onClick={() => borrar(p.id)} className="p-2 rounded-full" style={{ color: C.red }}><Trash2 size={17} /></button>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
