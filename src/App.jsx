@@ -1125,7 +1125,7 @@ function Configuracion({ tab, setTab, productos, personas, bufets, recetario, st
       </div>
       <div className="p-4">
         {tab === "productos" && <ProductosConfig productos={productos} onGuardar={(d) => onGuardar("productos", d)} />}
-        {tab === "recetario" && <RecetarioConfig productos={productos} recetario={recetario} onGuardarRecetario={onGuardarRecetario} />}
+        {tab === "recetario" && <RecetarioConfig productos={productos} recetario={recetario} onGuardarRecetario={onGuardarRecetario} onGuardarProductos={(data) => onGuardar("productos", data)} />}
         {tab === "stock" && <StockConfig productos={productos.filter((p) => p.tipo === "insumo")} stock={stockInsumos} onGuardarValor={onGuardarStockValor} />}
         {tab === "personas" && <ListaSimpleConfig items={personas} onGuardar={(d) => onGuardar("personas", d)} placeholder="Nombre de la persona" />}
         {tab === "bufets" && <ListaSimpleConfig items={bufets} onGuardar={(d) => onGuardar("bufets", d)} placeholder="Nombre del bufet / escuela" />}
@@ -1229,7 +1229,7 @@ function ProductosConfig({ productos, onGuardar }) {
   );
 }
 
-function RecetarioConfig({ productos, recetario, onGuardarRecetario }) {
+function RecetarioConfig({ productos, recetario, onGuardarRecetario, onGuardarProductos }) {
   const comidas = productos.filter((p) => p.tipo === "comida");
   const insumos = productos.filter((p) => p.tipo === "insumo");
   const [productoId, setProductoId] = useState(comidas[0]?.id || "");
@@ -1237,15 +1237,39 @@ function RecetarioConfig({ productos, recetario, onGuardarRecetario }) {
   const [cantidad, setCantidad] = useState(1);
 
   const receta = recetario[productoId] || [];
+  const productoActual = comidas.find((c) => c.id === productoId);
+
+  function costoDeReceta(lista) {
+    let total = 0;
+    let faltanCostos = false;
+    lista.forEach((r) => {
+      const insumo = insumos.find((i) => i.id === r.insumoId);
+      if (!insumo || !insumo.costo) { faltanCostos = true; return; }
+      total += insumo.costo * r.cantidad;
+    });
+    return { total, faltanCostos };
+  }
+  const { total: costoCalculado, faltanCostos } = costoDeReceta(receta);
+
+  function sincronizarCostoProducto(listaActualizada) {
+    if (!onGuardarProductos) return;
+    const { total } = costoDeReceta(listaActualizada);
+    onGuardarProductos(productos.map((p) => (p.id === productoId ? { ...p, costo: round2(total) } : p)));
+  }
 
   function agregarIngrediente() {
     if (!insumoId || !cantidad) return;
     const yaExiste = receta.some((r) => r.insumoId === insumoId);
     const nueva = yaExiste ? receta.map((r) => (r.insumoId === insumoId ? { ...r, cantidad: Number(cantidad) } : r)) : [...receta, { insumoId, cantidad: Number(cantidad) }];
     onGuardarRecetario(productoId, nueva);
+    sincronizarCostoProducto(nueva);
     setCantidad(1);
   }
-  function quitarIngrediente(insId) { onGuardarRecetario(productoId, receta.filter((r) => r.insumoId !== insId)); }
+  function quitarIngrediente(insId) {
+    const nueva = receta.filter((r) => r.insumoId !== insId);
+    onGuardarRecetario(productoId, nueva);
+    sincronizarCostoProducto(nueva);
+  }
 
   if (comidas.length === 0) return <EmptyNote text="Todavía no hay productos de comida en el catálogo." />;
 
@@ -1253,17 +1277,27 @@ function RecetarioConfig({ productos, recetario, onGuardarRecetario }) {
     <div className="flex flex-col gap-4">
       <Field label="Producto"><Select value={productoId} onChange={setProductoId} options={comidas.map((c) => ({ value: c.id, label: c.nombre }))} /></Field>
 
+      <div className="rounded-xl p-3 flex items-center justify-between" style={{ background: faltanCostos ? "#FDECC8" : "#E3EFE8" }}>
+        <span style={{ fontSize: 12.5, color: C.inkSoft, fontWeight: 600 }}>Costo de este plato (según receta)</span>
+        <span className="ticket-num" style={{ fontSize: 16, fontWeight: 700, color: C.tealDark }}>{money(costoCalculado)}</span>
+      </div>
+      {faltanCostos && receta.length > 0 && (
+        <div style={{ fontSize: 11.5, color: C.inkSoft, marginTop: -8 }}>Ojo: algún ingrediente todavía no tiene costo cargado, así que este número está incompleto.</div>
+      )}
+
       <div className="rounded-xl p-3" style={{ background: C.paperDark }}>
         <div style={{ fontSize: 11.5, fontWeight: 700, color: C.inkSoft, textTransform: "uppercase", marginBottom: 8 }}>Ingredientes actuales</div>
         {receta.length === 0 ? <EmptyNote text="Sin receta cargada todavía." /> : (
           <div className="flex flex-col gap-2">
             {receta.map((r) => {
               const insumo = insumos.find((i) => i.id === r.insumoId);
+              const subtotal = insumo?.costo ? insumo.costo * r.cantidad : null;
               return (
                 <div key={r.insumoId} className="flex items-center justify-between rounded-lg p-2" style={{ background: C.white, border: `1px solid ${C.line}` }}>
                   <span style={{ fontSize: 13 }}>{insumo?.nombre || r.insumoId}</span>
                   <div className="flex items-center gap-2">
                     <span className="ticket-num" style={{ fontSize: 13 }}>{r.cantidad} {insumo?.unidad}</span>
+                    <span className="ticket-num" style={{ fontSize: 12, color: subtotal != null ? C.teal : C.inkSoft }}>{subtotal != null ? money(subtotal) : "sin costo"}</span>
                     <button onClick={() => quitarIngrediente(r.insumoId)} className="p-1 rounded-full" style={{ color: C.red }}><Trash2 size={14} /></button>
                   </div>
                 </div>
