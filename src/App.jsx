@@ -17,7 +17,7 @@ const C = {
 const PIN = "4500";
 const ADMIN_NAMES = ["Vos (dueño)", "Mamá", "Hermano"];
 const VENTANA_DESHACER_MS = 3 * 60 * 1000;
-const UNIDADES = ["unidad", "gramo (g)", "kg", "l", "ml", "paquete", "cajas", "feta", "tapa", "plancha triple", "cucharada", "diente", "rodaja", "hoja", "manojo", "frasco"];
+const UNIDADES = ["unidad", "gramo (g)", "kg", "l", "ml", "paquete", "cajas", "feta", "tapa", "plancha", "cucharada", "diente", "rodaja", "hoja", "manojo", "frasco"];
 
 function round2(n) { return Math.round((Number(n) || 0) * 100) / 100; }
 
@@ -51,7 +51,7 @@ const DEFAULT_PRODUCTOS = [
   { id: "i_cebollin", nombre: "Cebollín", tipo: "insumo", unidad: "manojo", unidadCompra: "Manojo", rendimiento: 1, notas: 'A gusto, no se descuenta automático', precioVenta: 0, costo: 0 },
   { id: "i_crema_leche", nombre: "Crema de leche", tipo: "insumo", unidad: "cucharada", unidadCompra: "Pote", rendimiento: 14, notas: "1 pote rinde ~14 cucharadas (~20g c/u)", precioVenta: 0, costo: 0 },
   { id: "i_espinaca", nombre: "Espinaca", tipo: "insumo", unidad: "gramo (g)", unidadCompra: "Kilogramo (kg)", rendimiento: 1000, notas: "", precioVenta: 0, costo: 0 },
-  { id: "i_plancha_miga", nombre: "Plancha triple (pan de miga)", tipo: "insumo", unidad: "plancha triple", unidadCompra: "Molde de pan de miga", rendimiento: 12, notas: "Un molde rinde 12 planchas triple", precioVenta: 0, costo: 0 },
+  { id: "i_plancha_miga", nombre: "Plancha de pan de miga (individual)", tipo: "insumo", unidad: "plancha", unidadCompra: "Molde de pan de miga", rendimiento: 36, notas: "Un molde rinde 36 planchas individuales. Precio molde: $10.000", precioVenta: 0, costo: 277.78 },
   { id: "i_mayonesa", nombre: "Mayonesa", tipo: "insumo", unidad: "frasco", unidadCompra: "Frasco", rendimiento: 1, notas: 'A gusto, no se descuenta automático', precioVenta: 0, costo: 0 },
   { id: "i_jamon", nombre: "Jamón", tipo: "insumo", unidad: "gramo (g)", unidadCompra: "Pieza (aprox. 3,5 kg)", rendimiento: 3150, notas: "Estimado: retazos 300-400g por pieza. A confirmar con pesaje.", precioVenta: 0, costo: 0 },
   { id: "i_salame", nombre: "Salame", tipo: "insumo", unidad: "gramo (g)", unidadCompra: "Pieza (aprox. 2,5 kg)", rendimiento: 2500, notas: "Estimado (6-7 fetas/100g). A confirmar con pesaje.", precioVenta: 0, costo: 0 },
@@ -125,9 +125,9 @@ const DEFAULT_RECETARIO = {
     { insumoId: "i_queso_cremoso", cantidad: 180 }, { insumoId: "i_huevo", cantidad: 1 },
     { insumoId: "i_pascualina", cantidad: 1 },
   ],
-  c_miga_jq: [{ insumoId: "i_plancha_miga", cantidad: 1 }, { insumoId: "i_jamon", cantidad: 50 }, { insumoId: "i_queso_tybo", cantidad: 42 }],
-  c_miga_sq: [{ insumoId: "i_plancha_miga", cantidad: 1 }, { insumoId: "i_salame", cantidad: 75 }, { insumoId: "i_queso_tybo", cantidad: 42 }],
-  c_miga_jh: [{ insumoId: "i_plancha_miga", cantidad: 1 }, { insumoId: "i_jamon", cantidad: 50 }, { insumoId: "i_huevo", cantidad: 1 }],
+  c_miga_jq: [{ insumoId: "i_plancha_miga", cantidad: 3 }, { insumoId: "i_jamon", cantidad: 50 }, { insumoId: "i_queso_tybo", cantidad: 42 }],
+  c_miga_sq: [{ insumoId: "i_plancha_miga", cantidad: 3 }, { insumoId: "i_salame", cantidad: 75 }, { insumoId: "i_queso_tybo", cantidad: 42 }],
+  c_miga_jh: [{ insumoId: "i_plancha_miga", cantidad: 3 }, { insumoId: "i_jamon", cantidad: 50 }, { insumoId: "i_huevo", cantidad: 1 }],
   c_pastafrola: [
     { insumoId: "i_harina_0000", cantidad: 1000 }, { insumoId: "i_harina_comun", cantidad: 500 },
     { insumoId: "i_huevo", cantidad: 4 }, { insumoId: "i_manteca", cantidad: 500 },
@@ -213,6 +213,7 @@ async function aplicarStockPorProduccion(recetario, productoId, cantidadProducid
   const receta = recetario[productoId] || [];
   try {
     for (const ing of receta) {
+      if (ing.aGusto) continue;
       const { error } = await supabase.rpc("incrementar_stock", { p_insumo_id: ing.insumoId, p_delta: signo * ing.cantidad * cantidadProducida });
       if (error) throw error;
     }
@@ -323,6 +324,88 @@ async function ejecutarMigracionCatalogo(prodOriginal, recOriginal, stockOrigina
   return { productos, recetario, stockInsumos };
 }
 
+// ================= MIGRACIÓN AUTOMÁTICA V2 (setiembre 2026 — corre una sola vez) =================
+const MIGRATION_KEY_V2 = "migracion-2026-09-envio-directo-v2";
+
+async function ejecutarMigracionCatalogoV2(prodOriginal, recOriginal, stockOriginal) {
+  const yaHecha = await safeGet(MIGRATION_KEY_V2);
+  if (yaHecha) return null;
+
+  let productos = [...prodOriginal];
+  let recetario = { ...recOriginal };
+  let stockInsumos = { ...stockOriginal };
+  let cambios = false;
+
+  function buscarInsumo(nombre) {
+    return productos.find((p) => p.tipo === "insumo" && normalizeName(p.nombre) === normalizeName(nombre));
+  }
+  function agregarInsumoSiFalta(datos) {
+    const existente = buscarInsumo(datos.nombre);
+    if (existente) return existente;
+    const nuevo = { id: "i_" + Date.now().toString() + Math.random().toString(36).slice(2, 6), tipo: "insumo", precioVenta: 0, costo: 0, ...datos };
+    productos.push(nuevo);
+    cambios = true;
+    return nuevo;
+  }
+  function crearEnvioDirectoSiFalta(nombreProducto, insumo, cantidadPorUnidad, notas) {
+    if (!insumo) return;
+    const yaExiste = productos.some((p) => p.tipo === "comida" && normalizeName(p.nombre) === normalizeName(nombreProducto));
+    if (yaExiste) return;
+    const nuevoId = "c_envio_" + insumo.id + "_" + Date.now() + Math.random().toString(36).slice(2, 5);
+    productos.push({ id: nuevoId, nombre: nombreProducto, tipo: "comida", unidad: "unidad", unidadCompra: "", rendimiento: "", notas: notas || "Envío directo al bufet", precioVenta: 0, costo: 0 });
+    recetario[nuevoId] = [{ insumoId: insumo.id, cantidad: cantidadPorUnidad }];
+    cambios = true;
+  }
+
+  // 1) Molde de pan de miga: pasa de 12 planchas triple a 36 planchas individuales ($10.000 el molde → $277,78 c/u)
+  const plancha = productos.find((p) => p.tipo === "insumo" && normalizeName(p.nombre).includes("plancha"));
+  if (plancha && plancha.rendimiento !== 36) {
+    const rendimientoViejo = plancha.rendimiento || 12;
+    productos = productos.map((p) => (p.id === plancha.id
+      ? { ...p, nombre: "Plancha de pan de miga (individual)", unidad: "plancha", rendimiento: 36, notas: "Un molde rinde 36 planchas individuales. Precio molde: $10.000", costo: p.costo || 277.78 }
+      : p));
+    // convierte el stock existente (estaba en planchas triple) a planchas individuales (x3)
+    if (stockInsumos[plancha.id] != null) stockInsumos[plancha.id] = round2((Number(stockInsumos[plancha.id]) || 0) * (36 / rendimientoViejo));
+    // las recetas que usaban 1 plancha triple ahora usan 3 planchas individuales (conversión directa: cantidad_vieja x 3)
+    Object.keys(recetario).forEach((prodId) => {
+      recetario[prodId] = (recetario[prodId] || []).map((ing) => {
+        if (ing.insumoId !== plancha.id || ing.aGusto) return ing;
+        return { ...ing, cantidad: round2(ing.cantidad * 3) };
+      });
+    });
+    cambios = true;
+  }
+
+  // 2) Insumos nuevos para dar de alta
+  const salchicha = agregarInsumoSiFalta({ nombre: "Salchicha", unidad: "unidad", unidadCompra: "Unidad", rendimiento: 1, notas: "" });
+  const tapaEmpanada = agregarInsumoSiFalta({ nombre: "Tapa de empanada", unidad: "unidad", unidadCompra: "Paquete (12 unidades)", rendimiento: 12, notas: "Distinta de la tapa de pascualina" });
+  const ketchup = agregarInsumoSiFalta({ nombre: "Ketchup", unidad: "frasco", unidadCompra: "Frasco", rendimiento: 1, notas: 'Aderezo, se envía el frasco entero al bufet' });
+  const cerealGeneral = agregarInsumoSiFalta({ nombre: "Cereal general", unidad: "paquete", unidadCompra: "Paquete", rendimiento: 1, notas: "Ítem general que agrupa distintos tipos de cereal, sin desglosar" });
+
+  // 3) Shells de envío directo — insumos que ya existían pero no se podían mandar directo al bufet
+  crearEnvioDirectoSiFalta("Cebolla (envío directo)", buscarInsumo("Cebolla"), 1, "Envío directo al bufet, por gramo");
+  crearEnvioDirectoSiFalta("Papa (envío directo)", buscarInsumo("Papa"), 1, "Envío directo al bufet, por gramo");
+  crearEnvioDirectoSiFalta("Huevo (envío directo)", buscarInsumo("Huevo (bufet)") || buscarInsumo("Huevo"), 1, "Envío directo al bufet, por unidad");
+  crearEnvioDirectoSiFalta("Yogurt natural (envío directo)", buscarInsumo("Yogurt natural"), 1, "Envío directo al bufet, por envase");
+  crearEnvioDirectoSiFalta("Aceite (envío directo)", buscarInsumo("Aceite"), 1, "Envío directo al bufet, por litro");
+  crearEnvioDirectoSiFalta("Leche (envío directo)", buscarInsumo("Leche (bufet)") || buscarInsumo("Leche"), 1, "Envío directo al bufet, por envase");
+  crearEnvioDirectoSiFalta("Queso tybo (envío directo)", buscarInsumo("Queso tybo"), 1, "Envío directo al bufet, por gramo");
+  crearEnvioDirectoSiFalta("Jamón (envío directo)", buscarInsumo("Jamón"), 1, "Envío directo al bufet, por gramo");
+  crearEnvioDirectoSiFalta("Salame (envío directo)", buscarInsumo("Salame"), 1, "Envío directo al bufet, por gramo");
+  crearEnvioDirectoSiFalta("Queso cremoso (envío directo)", buscarInsumo("Queso cremoso"), 1, "Envío directo al bufet, por gramo");
+  crearEnvioDirectoSiFalta("Hamburguesa - medallón (envío directo)", buscarInsumo("Medallón de hamburguesa"), 1, "Envío directo al bufet, por unidad, ya viene armado");
+  crearEnvioDirectoSiFalta("Mayonesa (envío directo)", buscarInsumo("Mayonesa"), 1, "Envío directo al bufet, por frasco");
+  crearEnvioDirectoSiFalta("Mostaza (envío directo)", buscarInsumo("Mostaza"), 1, "Envío directo al bufet, por frasco");
+  crearEnvioDirectoSiFalta("Salchicha (envío directo)", salchicha, 1, "Envío directo al bufet, por unidad");
+  crearEnvioDirectoSiFalta("Tapa de empanada (envío directo)", tapaEmpanada, 1, "Envío directo al bufet, por unidad");
+  crearEnvioDirectoSiFalta("Ketchup (envío directo)", ketchup, 1, "Envío directo al bufet, por frasco");
+  crearEnvioDirectoSiFalta("Cereal general (envío directo)", cerealGeneral, 1, "Envío directo al bufet, por paquete");
+
+  await safeSet(MIGRATION_KEY_V2, JSON.stringify({ fecha: todayKey(), cambios }));
+  if (!cambios) return null;
+  return { productos, recetario, stockInsumos };
+}
+
 export default function App() {
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState("home");
@@ -393,6 +476,16 @@ export default function App() {
         prod = resultadoMigracion.productos;
         rec = resultadoMigracion.recetario;
         stockActual = resultadoMigracion.stockInsumos;
+        await safeSet("catalogo-productos", JSON.stringify(prod));
+        await safeSet("catalogo-recetario", JSON.stringify(rec));
+        await safeSet("stock-insumos", JSON.stringify(stockActual));
+      }
+
+      const resultadoMigracionV2 = await ejecutarMigracionCatalogoV2(prod, rec, stockActual);
+      if (resultadoMigracionV2) {
+        prod = resultadoMigracionV2.productos;
+        rec = resultadoMigracionV2.recetario;
+        stockActual = resultadoMigracionV2.stockInsumos;
         await safeSet("catalogo-productos", JSON.stringify(prod));
         await safeSet("catalogo-recetario", JSON.stringify(rec));
         await safeSet("stock-insumos", JSON.stringify(stockActual));
@@ -774,6 +867,7 @@ function CargarProduccion({ productos, personas, bufets, entradas, cierreHoy, re
   const receta = recetario[productoId] || [];
   const consumo = receta.map((ing) => {
     const insumo = insumosCatalogo.find((i) => i.id === ing.insumoId);
+    if (ing.aGusto) return { nombre: insumo?.nombre || ing.insumoId, cantidad: null, unidad: "" };
     return { nombre: insumo?.nombre || ing.insumoId, cantidad: round2(ing.cantidad * (Number(cantidad) || 0)), unidad: insumo?.unidad || "" };
   });
 
@@ -803,7 +897,7 @@ function CargarProduccion({ productos, personas, bufets, entradas, cierreHoy, re
             <div style={{ fontSize: 11.5, fontWeight: 700, color: C.inkSoft, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>Esto va a consumir (según receta)</div>
             {consumo.map((c) => (
               <div key={c.nombre} className="flex justify-between" style={{ fontSize: 12.5, color: C.ink, paddingTop: 2 }}>
-                <span>{c.nombre}</span><span className="ticket-num">{c.cantidad} {c.unidad}</span>
+                <span>{c.nombre}</span><span className="ticket-num" style={c.cantidad === null ? { color: C.amberDark, fontStyle: "italic" } : {}}>{c.cantidad === null ? "a gusto" : `${c.cantidad} ${c.unidad}`}</span>
               </div>
             ))}
           </div>
@@ -1235,6 +1329,7 @@ function RecetarioConfig({ productos, recetario, onGuardarRecetario, onGuardarPr
   const [productoId, setProductoId] = useState(comidas[0]?.id || "");
   const [insumoId, setInsumoId] = useState(insumos[0]?.id || "");
   const [cantidad, setCantidad] = useState(1);
+  const [aGusto, setAGusto] = useState(false);
 
   const receta = recetario[productoId] || [];
   const productoActual = comidas.find((c) => c.id === productoId);
@@ -1243,6 +1338,7 @@ function RecetarioConfig({ productos, recetario, onGuardarRecetario, onGuardarPr
     let total = 0;
     let faltanCostos = false;
     lista.forEach((r) => {
+      if (r.aGusto) return;
       const insumo = insumos.find((i) => i.id === r.insumoId);
       if (!insumo || !insumo.costo) { faltanCostos = true; return; }
       total += insumo.costo * r.cantidad;
@@ -1259,12 +1355,15 @@ function RecetarioConfig({ productos, recetario, onGuardarRecetario, onGuardarPr
   }
 
   function agregarIngrediente() {
-    if (!insumoId || !cantidad) return;
+    if (!insumoId) return;
+    if (!aGusto && !cantidad) return;
     const yaExiste = receta.some((r) => r.insumoId === insumoId);
-    const nueva = yaExiste ? receta.map((r) => (r.insumoId === insumoId ? { ...r, cantidad: Number(cantidad) } : r)) : [...receta, { insumoId, cantidad: Number(cantidad) }];
+    const entrada = aGusto ? { insumoId, cantidad: 0, aGusto: true } : { insumoId, cantidad: Number(cantidad) };
+    const nueva = yaExiste ? receta.map((r) => (r.insumoId === insumoId ? entrada : r)) : [...receta, entrada];
     onGuardarRecetario(productoId, nueva);
     sincronizarCostoProducto(nueva);
     setCantidad(1);
+    setAGusto(false);
   }
   function quitarIngrediente(insId) {
     const nueva = receta.filter((r) => r.insumoId !== insId);
@@ -1298,13 +1397,19 @@ function RecetarioConfig({ productos, recetario, onGuardarRecetario, onGuardarPr
           <div className="flex flex-col gap-2">
             {receta.map((r) => {
               const insumo = insumos.find((i) => i.id === r.insumoId);
-              const subtotal = insumo?.costo ? insumo.costo * r.cantidad : null;
+              const subtotal = !r.aGusto && insumo?.costo ? insumo.costo * r.cantidad : null;
               return (
                 <div key={r.insumoId} className="flex items-center justify-between rounded-lg p-2" style={{ background: C.white, border: `1px solid ${C.line}` }}>
                   <span style={{ fontSize: 13 }}>{insumo?.nombre || r.insumoId}</span>
                   <div className="flex items-center gap-2">
-                    <span className="ticket-num" style={{ fontSize: 13 }}>{r.cantidad} {insumo?.unidad}</span>
-                    <span className="ticket-num" style={{ fontSize: 12, color: subtotal != null ? C.teal : C.inkSoft }}>{subtotal != null ? money(subtotal) : "sin costo"}</span>
+                    {r.aGusto ? (
+                      <span style={{ fontSize: 12, color: C.amberDark, fontWeight: 700, fontStyle: "italic" }}>a gusto</span>
+                    ) : (
+                      <>
+                        <span className="ticket-num" style={{ fontSize: 13 }}>{r.cantidad} {insumo?.unidad}</span>
+                        <span className="ticket-num" style={{ fontSize: 12, color: subtotal != null ? C.teal : C.inkSoft }}>{subtotal != null ? money(subtotal) : "sin costo"}</span>
+                      </>
+                    )}
                     <button onClick={() => quitarIngrediente(r.insumoId)} className="p-1 rounded-full" style={{ color: C.red }}><Trash2 size={14} /></button>
                   </div>
                 </div>
@@ -1317,7 +1422,13 @@ function RecetarioConfig({ productos, recetario, onGuardarRecetario, onGuardarPr
       <div className="rounded-xl p-3 flex flex-col gap-3" style={{ background: C.paperDark }}>
         <div style={{ fontSize: 11.5, fontWeight: 700, color: C.inkSoft, textTransform: "uppercase" }}>Agregar / actualizar ingrediente</div>
         <Field label="Insumo"><Select value={insumoId} onChange={setInsumoId} options={insumos.map((i) => ({ value: i.id, label: `${i.nombre} (${i.unidad})` }))} /></Field>
-        <Field label="Cantidad por unidad de producto"><input type="number" value={cantidad} onChange={(e) => setCantidad(e.target.value)} className="w-full rounded-lg px-3 py-2" style={{ border: `1px solid ${C.line}` }} /></Field>
+        <label className="flex items-center gap-2" style={{ fontSize: 13, color: C.ink }}>
+          <input type="checkbox" checked={aGusto} onChange={(e) => setAGusto(e.target.checked)} style={{ width: 16, height: 16 }} />
+          Es "a gusto" (sin cantidad fija, no descuenta stock)
+        </label>
+        {!aGusto && (
+          <Field label="Cantidad por unidad de producto"><input type="number" value={cantidad} onChange={(e) => setCantidad(e.target.value)} className="w-full rounded-lg px-3 py-2" style={{ border: `1px solid ${C.line}` }} /></Field>
+        )}
         <button onClick={agregarIngrediente} className="rounded-lg py-2.5 flex items-center justify-center gap-1" style={{ background: C.teal, color: C.white, fontWeight: 600, fontSize: 14 }}><Plus size={16} /> Guardar ingrediente</button>
       </div>
     </div>
