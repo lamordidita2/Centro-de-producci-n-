@@ -1247,14 +1247,15 @@ function RecetarioConfig({ productos, recetario, onGuardarRecetario, onGuardarPr
       if (!insumo || !insumo.costo) { faltanCostos = true; return; }
       total += insumo.costo * r.cantidad;
     });
-    return { total, faltanCostos };
+    const conMerma = total * 1.06;
+    return { total, conMerma, faltanCostos };
   }
-  const { total: costoCalculado, faltanCostos } = costoDeReceta(receta);
+  const { total: costoReal, conMerma: costoConMerma, faltanCostos } = costoDeReceta(receta);
 
   function sincronizarCostoProducto(listaActualizada) {
     if (!onGuardarProductos) return;
-    const { total } = costoDeReceta(listaActualizada);
-    onGuardarProductos(productos.map((p) => (p.id === productoId ? { ...p, costo: round2(total) } : p)));
+    const { conMerma } = costoDeReceta(listaActualizada);
+    onGuardarProductos(productos.map((p) => (p.id === productoId ? { ...p, costo: round2(conMerma) } : p)));
   }
 
   function agregarIngrediente() {
@@ -1277,9 +1278,15 @@ function RecetarioConfig({ productos, recetario, onGuardarRecetario, onGuardarPr
     <div className="flex flex-col gap-4">
       <Field label="Producto"><Select value={productoId} onChange={setProductoId} options={comidas.map((c) => ({ value: c.id, label: c.nombre }))} /></Field>
 
-      <div className="rounded-xl p-3 flex items-center justify-between" style={{ background: faltanCostos ? "#FDECC8" : "#E3EFE8" }}>
-        <span style={{ fontSize: 12.5, color: C.inkSoft, fontWeight: 600 }}>Costo de este plato (según receta)</span>
-        <span className="ticket-num" style={{ fontSize: 16, fontWeight: 700, color: C.tealDark }}>{money(costoCalculado)}</span>
+      <div className="rounded-xl p-3 flex flex-col gap-1.5" style={{ background: faltanCostos ? "#FDECC8" : "#E3EFE8" }}>
+        <div className="flex items-center justify-between">
+          <span style={{ fontSize: 12, color: C.inkSoft }}>Costo real (según receta)</span>
+          <span className="ticket-num" style={{ fontSize: 13, color: C.inkSoft }}>{money(costoReal)}</span>
+        </div>
+        <div className="flex items-center justify-between">
+          <span style={{ fontSize: 12.5, color: C.tealDark, fontWeight: 700 }}>Costo con 6% de merma (el que se usa)</span>
+          <span className="ticket-num" style={{ fontSize: 16, fontWeight: 700, color: C.tealDark }}>{money(costoConMerma)}</span>
+        </div>
       </div>
       {faltanCostos && receta.length > 0 && (
         <div style={{ fontSize: 11.5, color: C.inkSoft, marginTop: -8 }}>Ojo: algún ingrediente todavía no tiene costo cargado, así que este número está incompleto.</div>
