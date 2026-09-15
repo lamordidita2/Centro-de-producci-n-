@@ -10,9 +10,11 @@ import { supabase } from "./supabaseClient";
 // ---------- Colores del sistema (fichas de cocina) ----------
 const C = {
   paper: "#F6F1E6", paperDark: "#EFE7D6", ink: "#241F1C", inkSoft: "#5B5348",
-  line: "#D9CDB8", amber: "#E2A03F", amberDark: "#B97C22", teal: "#2E6659",
-  tealDark: "#1F4A3F", red: "#C1443C", green: "#4C8C6B", white: "#FFFDF9",
+  line: "#D9CDB8", amber: "#F4B400", amberDark: "#C68E00", teal: "#2E6659",
+  tealDark: "#1F4A3F", red: "#D6302B", green: "#4C8C6B", white: "#FFFDF9",
 };
+
+const LOGO_SRC = "/logo.png";
 
 const PIN = "4500";
 const ADMIN_NAMES = ["Vos (dueño)", "Mamá", "Hermano"];
