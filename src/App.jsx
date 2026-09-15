@@ -744,10 +744,13 @@ function Tile({ icon, bg, title, desc, onClick, locked }) {
 }
 function Header({ title, subtitle, onBack }) {
   return (
-    <div className="px-4 pt-6 pb-4" style={{ background: C.ink, color: C.white, borderBottom: `3px dashed ${C.paperDark}` }}>
+    <div className="px-4 pt-6 pb-4" style={{ background: C.red, color: C.white, borderBottom: `3px dashed ${C.paperDark}` }}>
       {onBack && <button onClick={onBack} className="mb-2 flex items-center gap-1 opacity-80" style={{ fontSize: 13 }}><ArrowLeft size={16} /> Volver</button>}
-      <div className="display-font" style={{ fontSize: 30, lineHeight: 1 }}>{title}</div>
-      {subtitle && <div style={{ fontSize: 13, opacity: 0.75, textTransform: "capitalize", marginTop: 4 }}>{subtitle}</div>}
+      <div className="flex items-center gap-3">
+        <img src={LOGO_SRC} alt="La Mordidita" style={{ width: 44, height: 44, borderRadius: "50%", flexShrink: 0, border: `2px solid ${C.white}` }} />
+        <div className="display-font" style={{ fontSize: 30, lineHeight: 1 }}>{title}</div>
+      </div>
+      {subtitle && <div style={{ fontSize: 13, opacity: 0.85, textTransform: "capitalize", marginTop: 4 }}>{subtitle}</div>}
     </div>
   );
 }
