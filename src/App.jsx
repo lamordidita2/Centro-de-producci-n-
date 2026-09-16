@@ -897,6 +897,15 @@ function CargarProduccion({ productos, personas, bufets, entradas, cierreHoy, re
         <Field label="Destino"><Select value={bufetId} onChange={setBufetId} options={[{ value: "general", label: "Sin destino / general" }, ...bufets.map((b) => ({ value: b.id, label: b.nombre }))]} /></Field>
         <Field label="Cantidad producida (unidades)"><Stepper value={cantidad} setValue={setCantidad} /></Field>
 
+        {producto && (
+          <div className="rounded-xl px-3 py-2 flex items-center justify-between" style={{ background: producto.costo ? "#E3EFE8" : C.paperDark }}>
+            <span style={{ fontSize: 12.5, color: C.inkSoft, fontWeight: 600 }}>Costo de esta producción ({Number(cantidad) || 0} u.)</span>
+            <span className="ticket-num" style={{ fontSize: 15, fontWeight: 700, color: producto.costo ? C.tealDark : C.inkSoft }}>
+              {producto.costo ? money(producto.costo * (Number(cantidad) || 0)) : "sin costo cargado"}
+            </span>
+          </div>
+        )}
+
         {consumo.length > 0 && (
           <div className="rounded-xl p-3" style={{ background: C.paperDark }}>
             <div style={{ fontSize: 11.5, fontWeight: 700, color: C.inkSoft, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>Esto va a consumir (según receta)</div>
@@ -931,6 +940,14 @@ function Resumen({ fecha, setFecha, insumos, produccion, cierre, loading, onTogg
   const totalVenta = Object.values(porProducto).reduce((a, b) => a + b.venta, 0);
   const margen = totalVenta - totalCosto;
 
+  const porBufet = {};
+  produccion.forEach((e) => {
+    const key = e.bufetNombre || "Sin destino / general";
+    if (!porBufet[key]) porBufet[key] = { costo: 0, venta: 0 };
+    porBufet[key].costo += e.cantidad * (e.costo || 0);
+    porBufet[key].venta += e.cantidad * (e.precioVenta || 0);
+  });
+
   const insumosAgrupados = {};
   insumos.forEach((e) => {
     const k = `${e.productoNombre}__${e.unidad}`;
@@ -944,6 +961,8 @@ function Resumen({ fecha, setFecha, insumos, produccion, cierre, loading, onTogg
     csv += "\nINSUMOS\nInsumo,Cantidad,Unidad,Persona,Hora\n";
     insumos.forEach((e) => { csv += `${e.productoNombre},${e.cantidad},${e.unidad},${e.personaNombre},${e.hora}\n`; });
     csv += `\nTOTALES\nCosto total,${totalCosto}\nVenta potencial,${totalVenta}\nMargen,${margen}\n`;
+    csv += "\nCOSTO ENVIADO POR BUFET\nBufet,Costo\n";
+    Object.entries(porBufet).forEach(([b, d]) => { csv += `${b},${d.costo}\n`; });
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url; a.download = `centro-produccion-${fecha}.csv`;
@@ -999,6 +1018,12 @@ function Resumen({ fecha, setFecha, insumos, produccion, cierre, loading, onTogg
             <SectionLabel>Producción por producto</SectionLabel>
             {Object.keys(porProducto).length === 0 ? <EmptyNote text="No se cargó producción este día." /> : (
               <ReceiptList>{Object.entries(porProducto).map(([nombre, d]) => (<ReceiptRow key={nombre} left={nombre} right={`${d.cantidad} u. · ${money(d.costo)}`} />))}</ReceiptList>
+            )}
+          </div>
+          <div>
+            <SectionLabel>Plata enviada por bufet (costo)</SectionLabel>
+            {Object.keys(porBufet).length === 0 ? <EmptyNote text="No se envió producción a ningún bufet este día." /> : (
+              <ReceiptList>{Object.entries(porBufet).map(([nombre, d]) => (<ReceiptRow key={nombre} left={nombre} right={money(d.costo)} />))}</ReceiptList>
             )}
           </div>
           <div>
