@@ -1937,9 +1937,12 @@ function BufetCierre({ bufetId, catalogo, personal, nivel, onPersonalActualizado
   function quitarPerdida(id) { if (!bloqueado) setPerdidas(perdidas.filter((l) => l.id !== id)); }
 
   const resumen = calcularCierre(catalogo, aperturaStock, reposiciones, sobrante, consumoPersonal, perdidas, pagos, fiado);
+  const faltantesSobrante = catalogo.filter((p) => sobrante[p.id] === undefined || sobrante[p.id] === "");
+  const bloqueaPorFaltantes = faltantesSobrante.length > 0;
 
   async function confirmarCierre() {
     if (esCorreccion && !motivoCorreccion.trim()) return;
+    if (bloqueaPorFaltantes) return;
     setGuardando(true);
     const payload = { sobrante, consumoPersonal, perdidas, pagos, fiado: Number(fiado) || 0, ...resumen, hora: horaAhora(), cerrado: true, responsable };
     const ok = await safeSet(`bufet-cierre-${bufetId}-${fecha}`, JSON.stringify(payload));
@@ -2015,12 +2018,15 @@ function BufetCierre({ bufetId, catalogo, personal, nivel, onPersonalActualizado
         <div>
           <SectionLabel>1. Stock que sobró</SectionLabel>
           <div className="flex flex-col gap-2">
-            {catalogo.map((p) => (
-              <div key={p.id} className="flex items-center justify-between gap-2 rounded-xl p-3" style={{ background: C.white, border: `1px solid ${C.line}` }}>
-                <span style={{ fontSize: 13.5, fontWeight: 600 }}>{p.nombre}</span>
-                <input type="number" value={sobrante[p.id] ?? ""} onChange={(e) => setSobrante({ ...sobrante, [p.id]: e.target.value })} className="text-center rounded-lg ticket-num" style={{ width: 70, fontSize: 15, border: `1px solid ${C.line}`, padding: "6px 0" }} />
-              </div>
-            ))}
+            {catalogo.map((p) => {
+              const falta = sobrante[p.id] === undefined || sobrante[p.id] === "";
+              return (
+                <div key={p.id} className="flex items-center justify-between gap-2 rounded-xl p-3" style={{ background: C.white, border: `1px solid ${falta ? C.red : C.line}` }}>
+                  <span style={{ fontSize: 13.5, fontWeight: 600 }}>{p.nombre}</span>
+                  <input type="number" value={sobrante[p.id] ?? ""} onChange={(e) => setSobrante({ ...sobrante, [p.id]: e.target.value })} className="text-center rounded-lg ticket-num" style={{ width: 70, fontSize: 15, border: `1px solid ${falta ? C.red : C.line}`, padding: "6px 0" }} />
+                </div>
+              );
+            })}
           </div>
         </div>
 
@@ -2114,10 +2120,28 @@ function BufetCierre({ bufetId, catalogo, personal, nivel, onPersonalActualizado
           )}
         </div>
 
+        {resumen.diferencia < 0 && !bloqueaPorFaltantes && (
+          <div className="rounded-xl p-3 flex items-start gap-2" style={{ background: "#F5E4E2", border: `1px solid ${C.red}` }}>
+            <ShieldAlert size={18} color={C.red} className="flex-shrink-0 mt-0.5" />
+            <div style={{ fontSize: 12, color: C.red }}>
+              <strong>Falta dinero según lo cargado ({money(resumen.diferencia)}).</strong> Antes de confirmar, revisá: ¿se completaron todas las formas de cobro (efectivo, transferencia, QR, tarjeta)? ¿quedó algún fiado sin anotar? ¿el sobrante de cada producto es el conteo real? Si todo eso está bien, puede que realmente falte esa plata en caja.
+            </div>
+          </div>
+        )}
+
+        {bloqueaPorFaltantes && (
+          <div className="rounded-xl p-3 flex items-start gap-2" style={{ background: "#F5E4E2", border: `1px solid ${C.red}` }}>
+            <ShieldAlert size={18} color={C.red} className="flex-shrink-0 mt-0.5" />
+            <div style={{ fontSize: 12.5, color: C.red }}>
+              Falta completar el sobrante de: <strong>{faltantesSobrante.map((p) => p.nombre).join(", ")}</strong>. No se puede confirmar el cierre hasta completar todos los productos (poné 0 si realmente no quedó nada).
+            </div>
+          </div>
+        )}
+
         {esCorreccion && (
           <Field label="Motivo de la corrección (obligatorio)"><input value={motivoCorreccion} onChange={(e) => setMotivoCorreccion(e.target.value)} className="w-full rounded-lg px-3 py-2" style={{ border: `1px solid ${C.line}` }} placeholder="Ej: se cargó mal el sobrante de gaseosa..." /></Field>
         )}
-        <button onClick={confirmarCierre} disabled={guardando || (esCorreccion && !motivoCorreccion.trim())} className="w-full rounded-xl py-4 display-font flex items-center justify-center gap-2" style={{ background: C.amber, color: C.white, fontSize: 22, opacity: (esCorreccion && !motivoCorreccion.trim()) ? 0.5 : 1 }}>
+        <button onClick={confirmarCierre} disabled={guardando || bloqueaPorFaltantes || (esCorreccion && !motivoCorreccion.trim())} className="w-full rounded-xl py-4 display-font flex items-center justify-center gap-2" style={{ background: bloqueaPorFaltantes ? C.line : C.amber, color: C.white, fontSize: 22, opacity: (esCorreccion && !motivoCorreccion.trim()) ? 0.5 : 1 }}>
           {guardando ? <Loader2 className="animate-spin" size={22} /> : <Check size={22} />} {esCorreccion ? "Guardar corrección" : "Confirmar Cierre"}
         </button>
       </div>
