@@ -679,6 +679,7 @@ export default function App() {
           <Configuracion tab={configTab} setTab={setConfigTab} productos={productos} personas={personas} bufets={bufets} recetario={recetario} stockInsumos={stockInsumos}
             onGuardar={guardarCatalogo} onGuardarRecetario={guardarRecetario} onGuardarStockValor={guardarStockValor} onBack={() => setView("home")} />
         )}
+        {view === "bufet" && <BufetModule onBack={() => setView("home")} />}
       </div>
     </div>
   );
@@ -724,6 +725,7 @@ function Home({ goProtected, setView, authenticated, cierreHoy, storageOk, onVer
         <Tile icon={<ChefHat size={26} color={C.white} />} bg={C.amber} title="Cargar Producción" desc="Qué se hizo hoy y para qué bufet" onClick={() => setView("produccion")} />
         <Tile icon={<BarChart3 size={26} color={C.white} />} bg={C.ink} title="Resumen del Día" desc="Totales, stock, cierre y correcciones" locked={!authenticated} onClick={() => goProtected("resumen")} />
         <Tile icon={<Settings size={26} color={C.white} />} bg={C.inkSoft} title="Configuración" desc="Productos, recetario, stock y más" locked={!authenticated} onClick={() => goProtected("config")} />
+        <Tile icon={<Store size={26} color={C.white} />} bg={C.tealDark} title="Control de Bufet" desc="Apertura, cierre y caja de cada bufet" onClick={() => setView("bufet")} />
       </div>
       <div className="px-4 pb-6 pt-2 text-center" style={{ color: C.inkSoft, fontSize: 12 }}>
         Prototipo · Tocá "Compartir" en tu navegador y "Agregar a pantalla de inicio" para acceso rápido.
@@ -1510,6 +1512,619 @@ function ListaSimpleConfig({ items, onGuardar, placeholder }) {
             <button onClick={() => borrar(i.id)} className="p-2 rounded-full" style={{ color: C.red }}><Trash2 size={17} /></button>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+// ================= MÓDULO: CONTROL DE BUFET =================
+const DESCUENTO_PERSONAL = { comida: 0.15, bebida: 0.10 };
+
+function BufetModule({ onBack }) {
+  const [sub, setSub] = useState("select");
+  const [bufetsList, setBufetsList] = useState([]);
+  const [bufetId, setBufetId] = useState(null);
+  const [nivel, setNivel] = useState(null); // "staff" | "supervisor"
+  const [pinInput, setPinInput] = useState("");
+  const [pinError, setPinError] = useState(false);
+  const [catalogo, setCatalogo] = useState([]);
+  const [personal, setPersonal] = useState([]);
+  const [accesos, setAccesos] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      const raw = await safeGet("catalogo-bufets");
+      setBufetsList(raw ? JSON.parse(raw) : []);
+      setLoading(false);
+    })();
+  }, []);
+
+  async function elegirBufet(id) {
+    setLoading(true);
+    setBufetId(id);
+    let cat = await safeGet(`bufet-catalogo-${id}`); cat = cat ? JSON.parse(cat) : [];
+    let per = await safeGet(`bufet-personal-${id}`); per = per ? JSON.parse(per) : [];
+    let acc = await safeGet(`bufet-accesos-${id}`);
+    if (!acc) { acc = { staff: "1111", supervisor: "2222" }; await safeSet(`bufet-accesos-${id}`, JSON.stringify(acc)); } else acc = JSON.parse(acc);
+    setCatalogo(cat); setPersonal(per); setAccesos(acc);
+    setLoading(false);
+    setPinInput(""); setPinError(false);
+    setSub("pin");
+  }
+
+  function confirmarPin() {
+    if (!accesos) return;
+    if (pinInput === accesos.supervisor) { setNivel("supervisor"); setSub("home"); }
+    else if (pinInput === accesos.staff) { setNivel("staff"); setSub("home"); }
+    else { setPinError(true); setPinInput(""); }
+  }
+
+  async function guardarCatalogoBufet(data) { setCatalogo(data); await safeSet(`bufet-catalogo-${bufetId}`, JSON.stringify(data)); }
+  async function guardarPersonalBufet(data) { setPersonal(data); await safeSet(`bufet-personal-${bufetId}`, JSON.stringify(data)); }
+  async function guardarAccesosBufet(data) { setAccesos(data); await safeSet(`bufet-accesos-${bufetId}`, JSON.stringify(data)); }
+
+  const bufetNombre = bufetsList.find((b) => b.id === bufetId)?.nombre || "";
+
+  if (loading) return <div style={{ background: C.paper, minHeight: "100vh" }} className="flex items-center justify-center"><Loader2 className="animate-spin" color={C.inkSoft} /></div>;
+
+  if (sub === "select") return <BufetSelect bufets={bufetsList} onElegir={elegirBufet} onBack={onBack} />;
+  if (sub === "pin") return <BufetPinScreen nombre={bufetNombre} pinInput={pinInput} setPinInput={setPinInput} pinError={pinError} onConfirmar={confirmarPin} onBack={() => setSub("select")} />;
+  if (sub === "home") return <BufetHome nombre={bufetNombre} nivel={nivel} setSub={setSub} onBack={onBack} />;
+  if (sub === "apertura") return <BufetApertura bufetId={bufetId} catalogo={catalogo} onBack={() => setSub("home")} />;
+  if (sub === "reposicion") return <BufetReposicion bufetId={bufetId} catalogo={catalogo} onBack={() => setSub("home")} />;
+  if (sub === "cierre") return <BufetCierre bufetId={bufetId} catalogo={catalogo} personal={personal} onBack={() => setSub("home")} />;
+  if (sub === "historial") return <BufetHistorial bufetId={bufetId} catalogo={catalogo} onBack={() => setSub("home")} />;
+  if (sub === "config") return (
+    <BufetConfig catalogo={catalogo} personal={personal} accesos={accesos}
+      onGuardarCatalogo={guardarCatalogoBufet} onGuardarPersonal={guardarPersonalBufet} onGuardarAccesos={guardarAccesosBufet}
+      onBack={() => setSub("home")} />
+  );
+  return null;
+}
+
+function BufetSelect({ bufets, onElegir, onBack }) {
+  return (
+    <div>
+      <Header title="Control de Bufet" subtitle="Elegí tu bufet" onBack={onBack} />
+      <div className="p-4 flex flex-col gap-3">
+        {bufets.length === 0 ? (
+          <EmptyNote text='No hay bufets configurados todavía. Agregalos en Configuración → Bufets.' />
+        ) : bufets.map((b) => (
+          <button key={b.id} onClick={() => onElegir(b.id)} className="w-full flex items-center gap-4 p-4 rounded-2xl text-left active:scale-[0.98] transition-transform" style={{ background: C.white, border: `1px solid ${C.line}`, minHeight: 72 }}>
+            <div className="rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: C.teal, width: 48, height: 48 }}><Store size={22} color={C.white} /></div>
+            <div className="display-font" style={{ fontSize: 20, color: C.ink }}>{b.nombre}</div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function BufetPinScreen({ nombre, pinInput, setPinInput, pinError, onConfirmar, onBack }) {
+  return (
+    <div>
+      <Header title={nombre} subtitle="Ingresá el código de acceso" onBack={onBack} />
+      <div className="p-6 flex flex-col items-center gap-4">
+        <Lock size={32} color={C.inkSoft} />
+        <div style={{ color: C.inkSoft, fontSize: 13, textAlign: "center" }}>Personal del bufet: código diario. Supervisora: código propio para más opciones.</div>
+        <input type="password" inputMode="numeric" maxLength={6} value={pinInput} onChange={(e) => setPinInput(e.target.value.replace(/\D/g, ""))} onKeyDown={(e) => e.key === "Enter" && onConfirmar()}
+          className="text-center rounded-xl px-4 py-3 w-40" style={{ border: `2px solid ${pinError ? C.red : C.line}`, fontSize: 24, letterSpacing: "0.3em" }} autoFocus />
+        {pinError && <div style={{ color: C.red, fontSize: 13 }}>Código incorrecto, probá de nuevo.</div>}
+        <button onClick={onConfirmar} className="w-full rounded-xl py-3 display-font" style={{ background: C.teal, color: C.white, fontSize: 20, letterSpacing: "0.05em" }}>Ingresar</button>
+      </div>
+    </div>
+  );
+}
+
+function BufetHome({ nombre, nivel, setSub, onBack }) {
+  return (
+    <div>
+      <Header title={nombre} subtitle={formatFecha(todayKey())} onBack={onBack} />
+      <div className="p-4 flex flex-col gap-3">
+        <Tile icon={<Package size={26} color={C.white} />} bg={C.teal} title="Apertura" desc="Contar lo que llegó / hay para vender hoy" onClick={() => setSub("apertura")} />
+        <Tile icon={<Plus size={26} color={C.white} />} bg={C.amber} title="Reposición" desc="Sumar stock si llega más durante el día" onClick={() => setSub("reposicion")} />
+        <Tile icon={<BarChart3 size={26} color={C.white} />} bg={C.ink} title="Cierre del Día" desc="Sobrante, consumo, pérdidas, caja y fiado" onClick={() => setSub("cierre")} />
+        <Tile icon={<History size={26} color={C.white} />} bg={C.inkSoft} title="Historial" desc="Ver cierres y diferencias de otros días" onClick={() => setSub("historial")} />
+        {nivel === "supervisor" && (
+          <Tile icon={<Settings size={26} color={C.white} />} bg={C.tealDark} title="Configuración de Bufet" desc="Catálogo, precios, personal y códigos" onClick={() => setSub("config")} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function EmptyCatalogBufet({ onBack }) {
+  return (<div><Header title="Falta configurar" onBack={onBack} /><div className="p-6 text-center" style={{ color: C.inkSoft }}>Todavía no hay productos en el catálogo de este bufet. Pedile a la supervisora que los agregue en Configuración de Bufet.</div></div>);
+}
+
+// ---- Apertura ----
+function BufetApertura({ bufetId, catalogo, onBack }) {
+  const [valores, setValores] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [yaCargada, setYaCargada] = useState(false);
+  const [guardando, setGuardando] = useState(false);
+  const [guardado, setGuardado] = useState(false);
+  const fecha = todayKey();
+
+  useEffect(() => {
+    (async () => {
+      const raw = await safeGet(`bufet-apertura-${bufetId}-${fecha}`);
+      if (raw) { const data = JSON.parse(raw); setValores(data.stock || {}); setYaCargada(true); }
+      setLoading(false);
+    })();
+  }, [bufetId]);
+
+  async function guardar() {
+    setGuardando(true);
+    const stock = {};
+    catalogo.forEach((p) => { stock[p.id] = Number(valores[p.id]) || 0; });
+    const ok = await safeSet(`bufet-apertura-${bufetId}-${fecha}`, JSON.stringify({ stock, hora: horaAhora(), cargado: true }));
+    setGuardando(false);
+    if (ok) { setGuardado(true); setYaCargada(true); setTimeout(() => setGuardado(false), 2000); }
+  }
+
+  if (loading) return <div style={{ background: C.paper, minHeight: "100vh" }} className="flex items-center justify-center"><Loader2 className="animate-spin" color={C.inkSoft} /></div>;
+  if (catalogo.length === 0) return <EmptyCatalogBufet onBack={onBack} />;
+
+  return (
+    <div>
+      <Header title="Apertura del Día" subtitle={formatFecha(fecha)} onBack={onBack} />
+      {yaCargada && (
+        <div className="mx-4 mt-4 p-3 rounded-xl" style={{ background: "#E3EFE8", border: `1px solid ${C.green}`, fontSize: 12.5, color: C.tealDark }}>
+          Ya se cargó la apertura de hoy. Si guardás de nuevo, se reemplaza el número anterior.
+        </div>
+      )}
+      <div className="p-4 flex flex-col gap-2">
+        <div style={{ fontSize: 12, color: C.inkSoft, marginBottom: 4 }}>Contá lo que realmente llegó / hay disponible para vender hoy, producto por producto.</div>
+        {catalogo.map((p) => (
+          <div key={p.id} className="flex items-center justify-between gap-2 rounded-xl p-3" style={{ background: C.white, border: `1px solid ${C.line}` }}>
+            <div className="min-w-0 flex-1">
+              <div style={{ fontSize: 13.5, fontWeight: 600 }}>{p.nombre}</div>
+              <div style={{ fontSize: 11, color: C.inkSoft }}>{p.tipo === "bebida" ? "Bebida" : "Comida"}</div>
+            </div>
+            <input type="number" value={valores[p.id] ?? ""} onChange={(e) => setValores({ ...valores, [p.id]: e.target.value })} className="text-center rounded-lg ticket-num" style={{ width: 70, fontSize: 15, border: `1px solid ${C.line}`, padding: "6px 0" }} />
+          </div>
+        ))}
+        <button onClick={guardar} disabled={guardando} className="w-full rounded-xl py-4 mt-2 display-font flex items-center justify-center gap-2" style={{ background: C.teal, color: C.white, fontSize: 20 }}>
+          {guardando ? <Loader2 className="animate-spin" size={20} /> : <Check size={20} />} Guardar Apertura
+        </button>
+        {guardado && <div className="text-center" style={{ color: C.green, fontSize: 13, fontWeight: 700 }}>✓ Apertura guardada.</div>}
+      </div>
+    </div>
+  );
+}
+
+// ---- Reposición ----
+function BufetReposicion({ bufetId, catalogo, onBack }) {
+  const [productoId, setProductoId] = useState(catalogo[0]?.id || "");
+  const [cantidad, setCantidad] = useState(1);
+  const [entradas, setEntradas] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const fecha = todayKey();
+
+  async function cargar() {
+    const list = await safeListPrefix(`bufet-reposicion-${bufetId}-${fecha}-`);
+    setEntradas(list.map((r) => r.value).sort((a, b) => (a.hora < b.hora ? 1 : -1)));
+    setLoading(false);
+  }
+  useEffect(() => { cargar(); }, [bufetId]);
+
+  async function guardar() {
+    if (!productoId || !cantidad || cantidad <= 0) return;
+    const producto = catalogo.find((p) => p.id === productoId);
+    const id = Date.now().toString();
+    const entry = { id, productoId, productoNombre: producto?.nombre || "", cantidad: Number(cantidad), hora: horaAhora() };
+    await safeSet(`bufet-reposicion-${bufetId}-${fecha}-${id}`, JSON.stringify(entry));
+    setCantidad(1);
+    cargar();
+  }
+
+  if (loading) return <div style={{ background: C.paper, minHeight: "100vh" }} className="flex items-center justify-center"><Loader2 className="animate-spin" color={C.inkSoft} /></div>;
+  if (catalogo.length === 0) return <EmptyCatalogBufet onBack={onBack} />;
+
+  return (
+    <div>
+      <Header title="Reposición" subtitle="Stock que se suma durante el día" onBack={onBack} />
+      <div className="p-4 flex flex-col gap-4">
+        <Field label="Producto"><Select value={productoId} onChange={setProductoId} options={catalogo.map((p) => ({ value: p.id, label: p.nombre }))} /></Field>
+        <Field label="Cantidad"><Stepper value={cantidad} setValue={setCantidad} /></Field>
+        <button onClick={guardar} className="w-full rounded-xl py-4 display-font flex items-center justify-center gap-2" style={{ background: C.amber, color: C.white, fontSize: 20 }}><Check size={20} /> Agregar</button>
+      </div>
+      <div className="px-4 pb-8">
+        <SectionLabel>Repuesto hoy</SectionLabel>
+        {entradas.length === 0 ? <EmptyNote text="Todavía no se repuso nada hoy." /> : (
+          <div className="flex flex-col gap-2">
+            {entradas.map((e) => (
+              <div key={e.id} className="flex items-center justify-between rounded-xl p-3" style={{ background: C.white, border: `1px solid ${C.line}` }}>
+                <span style={{ fontSize: 14 }}>{e.productoNombre}</span>
+                <span className="ticket-num" style={{ fontSize: 13, color: C.inkSoft }}>{e.cantidad} · {e.hora}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---- Cierre ----
+function calcularCierre(catalogo, aperturaStock, reposiciones, sobrante, consumoPersonal, perdidas, pagos, fiado) {
+  let recaudacionBruta = 0;
+  const detalle = catalogo.map((p) => {
+    const repuesto = reposiciones.filter((r) => r.productoId === p.id).reduce((a, r) => a + r.cantidad, 0);
+    const disponible = (Number(aperturaStock?.[p.id]) || 0) + repuesto;
+    const consumoCant = consumoPersonal.filter((c) => c.productoId === p.id).reduce((a, c) => a + Number(c.cantidad), 0);
+    const perdidaCant = perdidas.filter((l) => l.productoId === p.id).reduce((a, l) => a + Number(l.cantidad || 0), 0);
+    const sobranteCant = Number(sobrante[p.id]) || 0;
+    const vendidoAlPublico = Math.max(0, round2(disponible - sobranteCant - consumoCant - perdidaCant));
+    const recaudacionProducto = round2(vendidoAlPublico * (p.precioVenta || 0));
+    recaudacionBruta += recaudacionProducto;
+    return { ...p, disponible, sobranteCant, consumoCant, perdidaCant, vendidoAlPublico, recaudacionProducto };
+  });
+  const fiadoNum = Number(fiado) || 0;
+  const recaudacionEsperada = round2(recaudacionBruta - fiadoNum);
+  const cajaReal = round2((Number(pagos.efectivo) || 0) + (Number(pagos.transferencia) || 0) + (Number(pagos.qr) || 0) + (Number(pagos.tarjeta) || 0));
+  const diferencia = round2(cajaReal - recaudacionEsperada);
+  const deudaPorPersona = {};
+  consumoPersonal.forEach((c) => {
+    const producto = catalogo.find((p) => p.id === c.productoId);
+    const descuento = DESCUENTO_PERSONAL[producto?.tipo] ?? 0.15;
+    const valor = Number(c.cantidad) * (producto?.precioVenta || 0) * (1 - descuento);
+    deudaPorPersona[c.personaNombre] = round2((deudaPorPersona[c.personaNombre] || 0) + valor);
+  });
+  const perdidasTotalPesos = round2(perdidas.reduce((a, l) => a + (Number(l.monto) || 0), 0));
+  return { detalle, recaudacionBruta: round2(recaudacionBruta), recaudacionEsperada, cajaReal, diferencia, deudaPorPersona, perdidasTotalPesos };
+}
+
+function BufetCierre({ bufetId, catalogo, personal, onBack }) {
+  const [loading, setLoading] = useState(true);
+  const [aperturaStock, setAperturaStock] = useState(null);
+  const [reposiciones, setReposiciones] = useState([]);
+  const [sobrante, setSobrante] = useState({});
+  const [consumoPersonal, setConsumoPersonal] = useState([]);
+  const [perdidas, setPerdidas] = useState([]);
+  const [pagos, setPagos] = useState({ efectivo: "", transferencia: "", qr: "", tarjeta: "" });
+  const [fiado, setFiado] = useState("");
+  const [yaCerrado, setYaCerrado] = useState(false);
+  const [guardando, setGuardando] = useState(false);
+  const [guardado, setGuardado] = useState(false);
+
+  const [cPersonaId, setCPersonaId] = useState(personal[0]?.id || "");
+  const [cProductoId, setCProductoId] = useState(catalogo[0]?.id || "");
+  const [cCantidad, setCCantidad] = useState(1);
+
+  const [lProductoId, setLProductoId] = useState(catalogo[0]?.id || "");
+  const [lCantidad, setLCantidad] = useState(1);
+  const [lMotivo, setLMotivo] = useState("");
+  const [lMonto, setLMonto] = useState("");
+
+  const fecha = todayKey();
+
+  useEffect(() => {
+    (async () => {
+      const aRaw = await safeGet(`bufet-apertura-${bufetId}-${fecha}`);
+      setAperturaStock(aRaw ? JSON.parse(aRaw).stock : null);
+      const rList = await safeListPrefix(`bufet-reposicion-${bufetId}-${fecha}-`);
+      setReposiciones(rList.map((r) => r.value));
+      const cRaw = await safeGet(`bufet-cierre-${bufetId}-${fecha}`);
+      if (cRaw) {
+        const data = JSON.parse(cRaw);
+        setSobrante(data.sobrante || {}); setConsumoPersonal(data.consumoPersonal || []); setPerdidas(data.perdidas || []);
+        setPagos(data.pagos || { efectivo: "", transferencia: "", qr: "", tarjeta: "" }); setFiado(String(data.fiado || ""));
+        setYaCerrado(true);
+      }
+      setLoading(false);
+    })();
+  }, [bufetId]);
+
+  function agregarConsumo() {
+    if (!cPersonaId || !cProductoId || !cCantidad) return;
+    const persona = personal.find((p) => p.id === cPersonaId);
+    const producto = catalogo.find((p) => p.id === cProductoId);
+    setConsumoPersonal([...consumoPersonal, { id: Date.now().toString(), personaId: cPersonaId, personaNombre: persona?.nombre || "", productoId: cProductoId, productoNombre: producto?.nombre || "", cantidad: Number(cCantidad) }]);
+    setCCantidad(1);
+  }
+  function quitarConsumo(id) { setConsumoPersonal(consumoPersonal.filter((c) => c.id !== id)); }
+
+  function agregarPerdida() {
+    if (!lMonto) return;
+    const producto = catalogo.find((p) => p.id === lProductoId);
+    setPerdidas([...perdidas, { id: Date.now().toString(), productoId: lProductoId, productoNombre: producto?.nombre || "", cantidad: Number(lCantidad) || 0, motivo: lMotivo.trim(), monto: Number(lMonto) }]);
+    setLCantidad(1); setLMotivo(""); setLMonto("");
+  }
+  function quitarPerdida(id) { setPerdidas(perdidas.filter((l) => l.id !== id)); }
+
+  const resumen = calcularCierre(catalogo, aperturaStock, reposiciones, sobrante, consumoPersonal, perdidas, pagos, fiado);
+
+  async function confirmarCierre() {
+    setGuardando(true);
+    const payload = { sobrante, consumoPersonal, perdidas, pagos, fiado: Number(fiado) || 0, ...resumen, hora: horaAhora(), cerrado: true };
+    const ok = await safeSet(`bufet-cierre-${bufetId}-${fecha}`, JSON.stringify(payload));
+    setGuardando(false);
+    if (ok) { setGuardado(true); setYaCerrado(true); }
+  }
+
+  if (loading) return <div style={{ background: C.paper, minHeight: "100vh" }} className="flex items-center justify-center"><Loader2 className="animate-spin" color={C.inkSoft} /></div>;
+  if (catalogo.length === 0) return <EmptyCatalogBufet onBack={onBack} />;
+  if (aperturaStock === null) {
+    return (
+      <div>
+        <Header title="Cierre del Día" onBack={onBack} />
+        <div className="p-6 flex flex-col items-center gap-3 text-center">
+          <ShieldAlert size={28} color={C.red} />
+          <div style={{ color: C.red, fontSize: 14 }}>Todavía no se cargó la Apertura de hoy. Hacé la Apertura primero — sin eso, el sistema no puede calcular la diferencia de caja.</div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <Header title="Cierre del Día" subtitle={formatFecha(fecha)} onBack={onBack} />
+      {guardado && (
+        <div className="mx-4 mt-4 p-3 rounded-xl text-center" style={{ background: "#E3EFE8", border: `1px solid ${C.green}`, fontSize: 13, color: C.tealDark, fontWeight: 700 }}>✓ Cierre guardado.</div>
+      )}
+      {yaCerrado && !guardado && (
+        <div className="mx-4 mt-4 p-3 rounded-xl" style={{ background: "#FDECC8", fontSize: 12.5, color: C.inkSoft }}>Ya había un cierre cargado hoy. Si volvés a confirmar, se reemplaza.</div>
+      )}
+
+      <div className="p-4 flex flex-col gap-6">
+        {/* 1. Sobrante */}
+        <div>
+          <SectionLabel>1. Stock que sobró</SectionLabel>
+          <div className="flex flex-col gap-2">
+            {catalogo.map((p) => (
+              <div key={p.id} className="flex items-center justify-between gap-2 rounded-xl p-3" style={{ background: C.white, border: `1px solid ${C.line}` }}>
+                <span style={{ fontSize: 13.5, fontWeight: 600 }}>{p.nombre}</span>
+                <input type="number" value={sobrante[p.id] ?? ""} onChange={(e) => setSobrante({ ...sobrante, [p.id]: e.target.value })} className="text-center rounded-lg ticket-num" style={{ width: 70, fontSize: 15, border: `1px solid ${C.line}`, padding: "6px 0" }} />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* 2. Consumo del personal */}
+        <div>
+          <SectionLabel>2. Consumo del personal</SectionLabel>
+          <div className="rounded-xl p-3 flex flex-col gap-2" style={{ background: C.paperDark }}>
+            {personal.length === 0 ? <EmptyNote text="No hay personal cargado para este bufet." /> : (
+              <>
+                <div className="flex gap-2">
+                  <Field label="Persona"><Select value={cPersonaId} onChange={setCPersonaId} options={personal.map((p) => ({ value: p.id, label: p.nombre }))} /></Field>
+                  <Field label="Producto"><Select value={cProductoId} onChange={setCProductoId} options={catalogo.map((p) => ({ value: p.id, label: p.nombre }))} /></Field>
+                </div>
+                <Field label="Cantidad"><Stepper value={cCantidad} setValue={setCCantidad} /></Field>
+                <button onClick={agregarConsumo} className="rounded-lg py-2.5 flex items-center justify-center gap-1" style={{ background: C.teal, color: C.white, fontWeight: 600, fontSize: 14 }}><Plus size={16} /> Agregar consumo</button>
+              </>
+            )}
+          </div>
+          {consumoPersonal.length > 0 && (
+            <div className="flex flex-col gap-2 mt-2">
+              {consumoPersonal.map((c) => (
+                <div key={c.id} className="flex items-center justify-between rounded-lg p-2" style={{ background: C.white, border: `1px solid ${C.line}` }}>
+                  <span style={{ fontSize: 13 }}>{c.personaNombre} · {c.productoNombre}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="ticket-num" style={{ fontSize: 13 }}>{c.cantidad}</span>
+                    <button onClick={() => quitarConsumo(c.id)} className="p-1 rounded-full" style={{ color: C.red }}><Trash2 size={14} /></button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          <div style={{ fontSize: 11, color: C.inkSoft, marginTop: 4 }}>Se descuenta del stock con 15% (comida) o 10% (bebida) — no se cobra hoy, se resta de la quincena.</div>
+        </div>
+
+        {/* 3. Pérdidas */}
+        <div>
+          <SectionLabel>3. Pérdidas / vencimientos</SectionLabel>
+          <div className="rounded-xl p-3 flex flex-col gap-2" style={{ background: C.paperDark }}>
+            <div className="flex gap-2">
+              <Field label="Producto"><Select value={lProductoId} onChange={setLProductoId} options={catalogo.map((p) => ({ value: p.id, label: p.nombre }))} /></Field>
+              <Field label="Cantidad"><input type="number" value={lCantidad} onChange={(e) => setLCantidad(e.target.value)} className="w-full rounded-lg px-3 py-2" style={{ border: `1px solid ${C.line}` }} /></Field>
+            </div>
+            <Field label="Motivo"><input value={lMotivo} onChange={(e) => setLMotivo(e.target.value)} className="w-full rounded-lg px-3 py-2" style={{ border: `1px solid ${C.line}` }} placeholder="Ej: se cayó, venció, se regaló..." /></Field>
+            <Field label="Monto en pesos"><input type="number" value={lMonto} onChange={(e) => setLMonto(e.target.value)} className="w-full rounded-lg px-3 py-2" style={{ border: `1px solid ${C.line}` }} placeholder="$" /></Field>
+            <button onClick={agregarPerdida} className="rounded-lg py-2.5 flex items-center justify-center gap-1" style={{ background: C.red, color: C.white, fontWeight: 600, fontSize: 14 }}><Plus size={16} /> Agregar pérdida</button>
+          </div>
+          {perdidas.length > 0 && (
+            <div className="flex flex-col gap-2 mt-2">
+              {perdidas.map((l) => (
+                <div key={l.id} className="flex items-center justify-between rounded-lg p-2" style={{ background: C.white, border: `1px solid ${C.line}` }}>
+                  <span style={{ fontSize: 12.5 }}>{l.productoNombre} · {l.motivo || "sin motivo"}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="ticket-num" style={{ fontSize: 13, color: C.red }}>{money(l.monto)}</span>
+                    <button onClick={() => quitarPerdida(l.id)} className="p-1 rounded-full" style={{ color: C.red }}><Trash2 size={14} /></button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* 4. Formas de cobro */}
+        <div>
+          <SectionLabel>4. Formas de cobro (caja real)</SectionLabel>
+          <div className="flex flex-col gap-2">
+            {[["efectivo", "Efectivo"], ["transferencia", "Transferencia"], ["qr", "QR"], ["tarjeta", "Tarjeta"]].map(([key, label]) => (
+              <Field key={key} label={label}><input type="number" value={pagos[key]} onChange={(e) => setPagos({ ...pagos, [key]: e.target.value })} className="w-full rounded-lg px-3 py-2" style={{ border: `1px solid ${C.line}` }} placeholder="$" /></Field>
+            ))}
+          </div>
+        </div>
+
+        {/* 5. Fiado */}
+        <div>
+          <SectionLabel>5. Fiado del día</SectionLabel>
+          <Field label="Monto total fiado (el detalle queda en el cuaderno)"><input type="number" value={fiado} onChange={(e) => setFiado(e.target.value)} className="w-full rounded-lg px-3 py-2" style={{ border: `1px solid ${C.line}` }} placeholder="$" /></Field>
+        </div>
+
+        {/* Resumen calculado */}
+        <div className="rounded-2xl p-4" style={{ background: C.ink, color: C.white }}>
+          <div style={{ fontSize: 12, opacity: 0.7, textTransform: "uppercase", letterSpacing: "0.08em" }}>Cálculo automático</div>
+          <div className="flex justify-between mt-2" style={{ fontSize: 13 }}><span>Recaudación esperada</span><span className="ticket-num">{money(resumen.recaudacionEsperada)}</span></div>
+          <div className="flex justify-between mt-1" style={{ fontSize: 13 }}><span>Caja real</span><span className="ticket-num">{money(resumen.cajaReal)}</span></div>
+          <div className="flex justify-between mt-1" style={{ fontSize: 16, fontWeight: 700 }}><span>Diferencia</span><span className="ticket-num" style={{ color: resumen.diferencia < 0 ? C.red : C.green }}>{money(resumen.diferencia)}</span></div>
+          {Object.keys(resumen.deudaPorPersona).length > 0 && (
+            <div className="mt-3 pt-3" style={{ borderTop: "1px dashed rgba(255,255,255,0.3)" }}>
+              <div style={{ fontSize: 11, opacity: 0.7, marginBottom: 4 }}>Consumo a descontar de quincena</div>
+              {Object.entries(resumen.deudaPorPersona).map(([nombre, monto]) => (
+                <div key={nombre} className="flex justify-between" style={{ fontSize: 12.5 }}><span>{nombre}</span><span className="ticket-num">{money(monto)}</span></div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <button onClick={confirmarCierre} disabled={guardando} className="w-full rounded-xl py-4 display-font flex items-center justify-center gap-2" style={{ background: C.amber, color: C.white, fontSize: 22 }}>
+          {guardando ? <Loader2 className="animate-spin" size={22} /> : <Check size={22} />} Confirmar Cierre
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ---- Historial ----
+function BufetHistorial({ bufetId, catalogo, onBack }) {
+  const [fecha, setFecha] = useState(todayKey());
+  const [cierre, setCierre] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      const raw = await safeGet(`bufet-cierre-${bufetId}-${fecha}`);
+      setCierre(raw ? JSON.parse(raw) : null);
+      setLoading(false);
+    })();
+  }, [bufetId, fecha]);
+
+  return (
+    <div>
+      <Header title="Historial de Cierres" onBack={onBack} />
+      <div className="px-4 pt-4 flex items-center justify-between">
+        <button onClick={() => setFecha(addDays(fecha, -1))} className="p-2 rounded-full" style={{ background: C.paperDark }}><ChevronLeft size={18} /></button>
+        <div className="text-center"><div style={{ fontSize: 14, fontWeight: 600, textTransform: "capitalize" }}>{formatFecha(fecha)}</div></div>
+        <button onClick={() => setFecha(addDays(fecha, 1))} disabled={fecha >= todayKey()} className="p-2 rounded-full" style={{ background: C.paperDark, opacity: fecha >= todayKey() ? 0.4 : 1 }}><ChevronRight size={18} /></button>
+      </div>
+      {loading ? (
+        <div className="p-8 flex justify-center"><Loader2 className="animate-spin" color={C.inkSoft} /></div>
+      ) : !cierre ? (
+        <div className="p-4"><EmptyNote text="No hay cierre cargado para este día." /></div>
+      ) : (
+        <div className="p-4 flex flex-col gap-5">
+          <div className="rounded-2xl p-4" style={{ background: C.ink, color: C.white }}>
+            <div className="flex justify-between mt-1" style={{ fontSize: 13 }}><span>Recaudación esperada</span><span className="ticket-num">{money(cierre.recaudacionEsperada)}</span></div>
+            <div className="flex justify-between mt-1" style={{ fontSize: 13 }}><span>Caja real</span><span className="ticket-num">{money(cierre.cajaReal)}</span></div>
+            <div className="flex justify-between mt-1" style={{ fontSize: 18, fontWeight: 700 }}><span>Diferencia</span><span className="ticket-num" style={{ color: cierre.diferencia < 0 ? C.red : C.green }}>{money(cierre.diferencia)}</span></div>
+            <div className="flex justify-between mt-3 pt-2" style={{ fontSize: 12, opacity: 0.8, borderTop: "1px dashed rgba(255,255,255,0.3)" }}><span>Pérdidas del día</span><span className="ticket-num">{money(cierre.perdidasTotalPesos)}</span></div>
+            <div className="flex justify-between" style={{ fontSize: 12, opacity: 0.8 }}><span>Fiado</span><span className="ticket-num">{money(cierre.fiado)}</span></div>
+          </div>
+          <div>
+            <SectionLabel>Venta por producto</SectionLabel>
+            <ReceiptList>{(cierre.detalle || []).filter((d) => d.vendidoAlPublico > 0).map((d) => (
+              <ReceiptRow key={d.id} left={d.nombre} right={`${d.vendidoAlPublico} u. · ${money(d.recaudacionProducto)}`} />
+            ))}</ReceiptList>
+          </div>
+          {Object.keys(cierre.deudaPorPersona || {}).length > 0 && (
+            <div>
+              <SectionLabel>Consumo de personal (a descontar)</SectionLabel>
+              <ReceiptList>{Object.entries(cierre.deudaPorPersona).map(([nombre, monto]) => (
+                <ReceiptRow key={nombre} left={nombre} right={money(monto)} />
+              ))}</ReceiptList>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---- Configuración de Bufet (supervisor) ----
+function BufetConfig({ catalogo, personal, accesos, onGuardarCatalogo, onGuardarPersonal, onGuardarAccesos, onBack }) {
+  const [tab, setTab] = useState("catalogo");
+  const [nombre, setNombre] = useState("");
+  const [tipo, setTipo] = useState("comida");
+  const [precioVenta, setPrecioVenta] = useState("");
+  const [nombrePersona, setNombrePersona] = useState("");
+  const [precioHora, setPrecioHora] = useState("");
+  const [codStaff, setCodStaff] = useState(accesos?.staff || "");
+  const [codSuper, setCodSuper] = useState(accesos?.supervisor || "");
+
+  function agregarProducto() {
+    if (!nombre.trim()) return;
+    onGuardarCatalogo([...catalogo, { id: "bp_" + Date.now(), nombre: nombre.trim(), tipo, precioVenta: Number(precioVenta) || 0 }]);
+    setNombre(""); setPrecioVenta("");
+  }
+  function borrarProducto(id) { onGuardarCatalogo(catalogo.filter((p) => p.id !== id)); }
+  function actualizarPrecio(id, valor) { onGuardarCatalogo(catalogo.map((p) => (p.id === id ? { ...p, precioVenta: Number(valor) || 0 } : p))); }
+
+  function agregarPersona() {
+    if (!nombrePersona.trim()) return;
+    onGuardarPersonal([...personal, { id: "bper_" + Date.now(), nombre: nombrePersona.trim(), precioHora: Number(precioHora) || 0 }]);
+    setNombrePersona(""); setPrecioHora("");
+  }
+  function borrarPersona(id) { onGuardarPersonal(personal.filter((p) => p.id !== id)); }
+  function actualizarPrecioHora(id, valor) { onGuardarPersonal(personal.map((p) => (p.id === id ? { ...p, precioHora: Number(valor) || 0 } : p))); }
+
+  return (
+    <div>
+      <Header title="Configuración de Bufet" onBack={onBack} />
+      <div className="flex px-4 pt-4 gap-2 overflow-x-auto tabs-scroll" style={{ scrollbarWidth: "none" }}>
+        <TabBtn active={tab === "catalogo"} onClick={() => setTab("catalogo")} icon={<UtensilsCrossed size={14} />} label="Catálogo" />
+        <TabBtn active={tab === "personal"} onClick={() => setTab("personal")} icon={<Users size={14} />} label="Personal" />
+        <TabBtn active={tab === "accesos"} onClick={() => setTab("accesos")} icon={<Lock size={14} />} label="Accesos" />
+      </div>
+      <div className="p-4">
+        {tab === "catalogo" && (
+          <div className="flex flex-col gap-4">
+            <div className="rounded-xl p-3 flex flex-col gap-3" style={{ background: C.paperDark }}>
+              <Field label="Nombre del producto"><input value={nombre} onChange={(e) => setNombre(e.target.value)} className="w-full rounded-lg px-3 py-2" style={{ border: `1px solid ${C.line}` }} placeholder="Ej: Pebete" /></Field>
+              <div className="flex gap-2">
+                <Field label="Tipo"><Select value={tipo} onChange={setTipo} options={[{ value: "comida", label: "Comida" }, { value: "bebida", label: "Bebida" }]} /></Field>
+                <Field label="Precio al público"><input type="number" value={precioVenta} onChange={(e) => setPrecioVenta(e.target.value)} className="w-full rounded-lg px-3 py-2" style={{ border: `1px solid ${C.line}` }} placeholder="$" /></Field>
+              </div>
+              <button onClick={agregarProducto} className="rounded-lg py-2.5 flex items-center justify-center gap-1" style={{ background: C.teal, color: C.white, fontWeight: 600, fontSize: 14 }}><Plus size={16} /> Agregar producto</button>
+            </div>
+            <div className="flex flex-col gap-2">
+              {catalogo.map((p) => (
+                <div key={p.id} className="flex items-center justify-between gap-2 rounded-xl p-3" style={{ background: C.white, border: `1px solid ${C.line}` }}>
+                  <div className="min-w-0 flex-1">
+                    <div style={{ fontSize: 14, fontWeight: 600 }}>{p.nombre}</div>
+                    <div style={{ fontSize: 11.5, color: C.inkSoft }}>{p.tipo === "bebida" ? "Bebida" : "Comida"}</div>
+                  </div>
+                  <input type="number" defaultValue={p.precioVenta} onBlur={(e) => actualizarPrecio(p.id, e.target.value)} className="text-center rounded-lg ticket-num" style={{ width: 80, fontSize: 14, border: `1px solid ${C.line}`, padding: "6px 0" }} />
+                  <button onClick={() => borrarProducto(p.id)} className="p-2 rounded-full flex-shrink-0" style={{ color: C.red }}><Trash2 size={16} /></button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {tab === "personal" && (
+          <div className="flex flex-col gap-4">
+            <div className="rounded-xl p-3 flex flex-col gap-3" style={{ background: C.paperDark }}>
+              <Field label="Nombre"><input value={nombrePersona} onChange={(e) => setNombrePersona(e.target.value)} className="w-full rounded-lg px-3 py-2" style={{ border: `1px solid ${C.line}` }} placeholder="Nombre de la persona" /></Field>
+              <Field label="Precio por hora"><input type="number" value={precioHora} onChange={(e) => setPrecioHora(e.target.value)} className="w-full rounded-lg px-3 py-2" style={{ border: `1px solid ${C.line}` }} placeholder="$" /></Field>
+              <button onClick={agregarPersona} className="rounded-lg py-2.5 flex items-center justify-center gap-1" style={{ background: C.teal, color: C.white, fontWeight: 600, fontSize: 14 }}><Plus size={16} /> Agregar persona</button>
+            </div>
+            <div className="flex flex-col gap-2">
+              {personal.map((p) => (
+                <div key={p.id} className="flex items-center justify-between gap-2 rounded-xl p-3" style={{ background: C.white, border: `1px solid ${C.line}` }}>
+                  <div style={{ fontSize: 14, fontWeight: 600, flex: 1 }}>{p.nombre}</div>
+                  <input type="number" defaultValue={p.precioHora} onBlur={(e) => actualizarPrecioHora(p.id, e.target.value)} className="text-center rounded-lg ticket-num" style={{ width: 80, fontSize: 14, border: `1px solid ${C.line}`, padding: "6px 0" }} />
+                  <button onClick={() => borrarPersona(p.id)} className="p-2 rounded-full flex-shrink-0" style={{ color: C.red }}><Trash2 size={16} /></button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {tab === "accesos" && (
+          <div className="flex flex-col gap-4">
+            <div className="rounded-xl p-3" style={{ background: C.paperDark, fontSize: 12, color: C.inkSoft }}>
+              El código de Personal lo usan todos para entrar a Apertura/Reposición/Cierre. El código de Supervisora habilita además Configuración de Bufet.
+            </div>
+            <Field label="Código de Personal"><input value={codStaff} onChange={(e) => setCodStaff(e.target.value.replace(/\D/g, ""))} maxLength={6} className="w-full rounded-lg px-3 py-2 ticket-num" style={{ border: `1px solid ${C.line}`, fontSize: 18, letterSpacing: "0.2em" }} /></Field>
+            <Field label="Código de Supervisora"><input value={codSuper} onChange={(e) => setCodSuper(e.target.value.replace(/\D/g, ""))} maxLength={6} className="w-full rounded-lg px-3 py-2 ticket-num" style={{ border: `1px solid ${C.line}`, fontSize: 18, letterSpacing: "0.2em" }} /></Field>
+            <button onClick={() => onGuardarAccesos({ staff: codStaff, supervisor: codSuper })} className="rounded-lg py-2.5 flex items-center justify-center gap-1" style={{ background: C.teal, color: C.white, fontWeight: 600, fontSize: 14 }}><Save size={16} /> Guardar códigos</button>
+          </div>
+        )}
       </div>
     </div>
   );
