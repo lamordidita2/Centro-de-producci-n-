@@ -198,6 +198,10 @@ async function registrarAuditoria(fecha, responsable, accion, detalle) {
   const entry = { id: Date.now().toString() + Math.random().toString(36).slice(2, 6), hora: horaAhora(), responsable, accion, detalle };
   await safeSet(`auditoria-${fecha}-${entry.id}`, JSON.stringify(entry));
 }
+async function registrarAuditoriaBufet(bufetId, fecha, responsable, accion, detalle) {
+  const entry = { id: Date.now().toString() + Math.random().toString(36).slice(2, 6), hora: horaAhora(), responsable, accion, detalle };
+  await safeSet(`bufet-auditoria-${bufetId}-${fecha}-${entry.id}`, JSON.stringify(entry));
+}
 async function leerStock() {
   const raw = await safeGet("stock-insumos");
   return raw ? JSON.parse(raw) : {};
@@ -1571,10 +1575,11 @@ function BufetModule({ onBack }) {
   if (sub === "select") return <BufetSelect bufets={bufetsList} onElegir={elegirBufet} onBack={onBack} />;
   if (sub === "pin") return <BufetPinScreen nombre={bufetNombre} pinInput={pinInput} setPinInput={setPinInput} pinError={pinError} onConfirmar={confirmarPin} onBack={() => setSub("select")} />;
   if (sub === "home") return <BufetHome nombre={bufetNombre} nivel={nivel} setSub={setSub} onBack={onBack} />;
-  if (sub === "apertura") return <BufetApertura bufetId={bufetId} catalogo={catalogo} onBack={() => setSub("home")} />;
+  if (sub === "apertura") return <BufetApertura bufetId={bufetId} catalogo={catalogo} personal={personal} nivel={nivel} onBack={() => setSub("home")} />;
+  if (sub === "stockActual") return <BufetStockActual bufetId={bufetId} catalogo={catalogo} onBack={() => setSub("home")} />;
   if (sub === "reposicion") return <BufetReposicion bufetId={bufetId} catalogo={catalogo} onBack={() => setSub("home")} />;
-  if (sub === "cierre") return <BufetCierre bufetId={bufetId} catalogo={catalogo} personal={personal} onBack={() => setSub("home")} />;
-  if (sub === "historial") return <BufetHistorial bufetId={bufetId} catalogo={catalogo} onBack={() => setSub("home")} />;
+  if (sub === "cierre") return <BufetCierre bufetId={bufetId} catalogo={catalogo} personal={personal} nivel={nivel} onBack={() => setSub("home")} />;
+  if (sub === "historial") return <BufetHistorial bufetId={bufetId} catalogo={catalogo} nivel={nivel} onBack={() => setSub("home")} />;
   if (sub === "config") return (
     <BufetConfig catalogo={catalogo} personal={personal} accesos={accesos}
       onGuardarCatalogo={guardarCatalogoBufet} onGuardarPersonal={guardarPersonalBufet} onGuardarAccesos={guardarAccesosBufet}
@@ -1623,6 +1628,7 @@ function BufetHome({ nombre, nivel, setSub, onBack }) {
       <Header title={nombre} subtitle={formatFecha(todayKey())} onBack={onBack} />
       <div className="p-4 flex flex-col gap-3">
         <Tile icon={<Package size={26} color={C.white} />} bg={C.teal} title="Apertura" desc="Contar lo que llegó / hay para vender hoy" onClick={() => setSub("apertura")} />
+        <Tile icon={<Boxes size={26} color={C.white} />} bg={C.tealDark} title="Stock Actual" desc="Ver cuánto debería haber ahora (solo lectura)" onClick={() => setSub("stockActual")} />
         <Tile icon={<Plus size={26} color={C.white} />} bg={C.amber} title="Reposición" desc="Sumar stock si llega más durante el día" onClick={() => setSub("reposicion")} />
         <Tile icon={<BarChart3 size={26} color={C.white} />} bg={C.ink} title="Cierre del Día" desc="Sobrante, consumo, pérdidas, caja y fiado" onClick={() => setSub("cierre")} />
         <Tile icon={<History size={26} color={C.white} />} bg={C.inkSoft} title="Historial" desc="Ver cierres y diferencias de otros días" onClick={() => setSub("historial")} />
@@ -1639,29 +1645,41 @@ function EmptyCatalogBufet({ onBack }) {
 }
 
 // ---- Apertura ----
-function BufetApertura({ bufetId, catalogo, onBack }) {
+function BufetApertura({ bufetId, catalogo, personal, nivel, onBack }) {
   const [valores, setValores] = useState({});
   const [loading, setLoading] = useState(true);
   const [yaCargada, setYaCargada] = useState(false);
+  const [responsableOriginal, setResponsableOriginal] = useState("");
   const [guardando, setGuardando] = useState(false);
   const [guardado, setGuardado] = useState(false);
+  const opcionesResponsable = [...personal.map((p) => p.nombre), "Supervisora"];
+  const [responsable, setResponsable] = useState(opcionesResponsable[0] || "");
+  const [motivo, setMotivo] = useState("");
   const fecha = todayKey();
 
   useEffect(() => {
     (async () => {
       const raw = await safeGet(`bufet-apertura-${bufetId}-${fecha}`);
-      if (raw) { const data = JSON.parse(raw); setValores(data.stock || {}); setYaCargada(true); }
+      if (raw) { const data = JSON.parse(raw); setValores(data.stock || {}); setYaCargada(true); setResponsableOriginal(data.responsable || ""); }
       setLoading(false);
     })();
   }, [bufetId]);
 
+  const bloqueado = yaCargada && nivel !== "supervisor";
+  const esCorreccion = yaCargada && nivel === "supervisor";
+
   async function guardar() {
+    if (esCorreccion && !motivo.trim()) return;
     setGuardando(true);
     const stock = {};
     catalogo.forEach((p) => { stock[p.id] = Number(valores[p.id]) || 0; });
-    const ok = await safeSet(`bufet-apertura-${bufetId}-${fecha}`, JSON.stringify({ stock, hora: horaAhora(), cargado: true }));
+    const ok = await safeSet(`bufet-apertura-${bufetId}-${fecha}`, JSON.stringify({ stock, hora: horaAhora(), cargado: true, responsable }));
+    if (ok) {
+      await registrarAuditoriaBufet(bufetId, fecha, responsable, esCorreccion ? "Corrigió apertura" : "Cargó apertura",
+        esCorreccion ? `Motivo: ${motivo.trim()}` : "Apertura del día registrada.");
+    }
     setGuardando(false);
-    if (ok) { setGuardado(true); setYaCargada(true); setTimeout(() => setGuardado(false), 2000); }
+    if (ok) { setGuardado(true); setYaCargada(true); setResponsableOriginal(responsable); setMotivo(""); setTimeout(() => setGuardado(false), 2000); }
   }
 
   if (loading) return <div style={{ background: C.paper, minHeight: "100vh" }} className="flex items-center justify-center"><Loader2 className="animate-spin" color={C.inkSoft} /></div>;
@@ -1671,25 +1689,90 @@ function BufetApertura({ bufetId, catalogo, onBack }) {
     <div>
       <Header title="Apertura del Día" subtitle={formatFecha(fecha)} onBack={onBack} />
       {yaCargada && (
-        <div className="mx-4 mt-4 p-3 rounded-xl" style={{ background: "#E3EFE8", border: `1px solid ${C.green}`, fontSize: 12.5, color: C.tealDark }}>
-          Ya se cargó la apertura de hoy. Si guardás de nuevo, se reemplaza el número anterior.
+        <div className="mx-4 mt-4 p-3 rounded-xl" style={{ background: bloqueado ? "#F5E4E2" : "#E3EFE8", border: `1px solid ${bloqueado ? C.red : C.green}`, fontSize: 12.5, color: bloqueado ? C.red : C.tealDark }}>
+          {bloqueado
+            ? `Ya se cargó la apertura de hoy (${responsableOriginal}). Para corregirla, pedile a la supervisora que entre con su código.`
+            : `Ya se cargó la apertura de hoy (${responsableOriginal}). Podés corregirla porque entraste como supervisora — dejá el motivo abajo.`}
         </div>
       )}
       <div className="p-4 flex flex-col gap-2">
+        <Field label="¿Quién carga?"><Select value={responsable} onChange={setResponsable} options={opcionesResponsable.map((n) => ({ value: n, label: n }))} /></Field>
         <div style={{ fontSize: 12, color: C.inkSoft, marginBottom: 4 }}>Contá lo que realmente llegó / hay disponible para vender hoy, producto por producto.</div>
         {catalogo.map((p) => (
-          <div key={p.id} className="flex items-center justify-between gap-2 rounded-xl p-3" style={{ background: C.white, border: `1px solid ${C.line}` }}>
+          <div key={p.id} className="flex items-center justify-between gap-2 rounded-xl p-3" style={{ background: C.white, border: `1px solid ${C.line}`, opacity: bloqueado ? 0.5 : 1 }}>
             <div className="min-w-0 flex-1">
               <div style={{ fontSize: 13.5, fontWeight: 600 }}>{p.nombre}</div>
               <div style={{ fontSize: 11, color: C.inkSoft }}>{p.tipo === "bebida" ? "Bebida" : "Comida"}</div>
             </div>
-            <input type="number" value={valores[p.id] ?? ""} onChange={(e) => setValores({ ...valores, [p.id]: e.target.value })} className="text-center rounded-lg ticket-num" style={{ width: 70, fontSize: 15, border: `1px solid ${C.line}`, padding: "6px 0" }} />
+            <input disabled={bloqueado} type="number" value={valores[p.id] ?? ""} onChange={(e) => setValores({ ...valores, [p.id]: e.target.value })} className="text-center rounded-lg ticket-num" style={{ width: 70, fontSize: 15, border: `1px solid ${C.line}`, padding: "6px 0" }} />
           </div>
         ))}
-        <button onClick={guardar} disabled={guardando} className="w-full rounded-xl py-4 mt-2 display-font flex items-center justify-center gap-2" style={{ background: C.teal, color: C.white, fontSize: 20 }}>
-          {guardando ? <Loader2 className="animate-spin" size={20} /> : <Check size={20} />} Guardar Apertura
-        </button>
+        {esCorreccion && (
+          <Field label="Motivo de la corrección (obligatorio)"><input value={motivo} onChange={(e) => setMotivo(e.target.value)} className="w-full rounded-lg px-3 py-2" style={{ border: `1px solid ${C.line}` }} placeholder="Ej: se contó mal, faltaba un producto..." /></Field>
+        )}
+        {!bloqueado && (
+          <button onClick={guardar} disabled={guardando || (esCorreccion && !motivo.trim())} className="w-full rounded-xl py-4 mt-2 display-font flex items-center justify-center gap-2" style={{ background: C.teal, color: C.white, fontSize: 20, opacity: (esCorreccion && !motivo.trim()) ? 0.5 : 1 }}>
+            {guardando ? <Loader2 className="animate-spin" size={20} /> : <Check size={20} />} {esCorreccion ? "Guardar corrección" : "Guardar Apertura"}
+          </button>
+        )}
         {guardado && <div className="text-center" style={{ color: C.green, fontSize: 13, fontWeight: 700 }}>✓ Apertura guardada.</div>}
+      </div>
+    </div>
+  );
+}
+
+// ---- Stock Actual (solo lectura, sin edición para evitar manipulación) ----
+function BufetStockActual({ bufetId, catalogo, onBack }) {
+  const [loading, setLoading] = useState(true);
+  const [aperturaStock, setAperturaStock] = useState(null);
+  const [aperturaHora, setAperturaHora] = useState("");
+  const [reposiciones, setReposiciones] = useState([]);
+  const fecha = todayKey();
+
+  useEffect(() => {
+    (async () => {
+      const aRaw = await safeGet(`bufet-apertura-${bufetId}-${fecha}`);
+      if (aRaw) { const data = JSON.parse(aRaw); setAperturaStock(data.stock || {}); setAperturaHora(data.hora || ""); } else setAperturaStock(null);
+      const rList = await safeListPrefix(`bufet-reposicion-${bufetId}-${fecha}-`);
+      setReposiciones(rList.map((r) => r.value));
+      setLoading(false);
+    })();
+  }, [bufetId]);
+
+  if (loading) return <div style={{ background: C.paper, minHeight: "100vh" }} className="flex items-center justify-center"><Loader2 className="animate-spin" color={C.inkSoft} /></div>;
+
+  if (aperturaStock === null) {
+    return (
+      <div>
+        <Header title="Stock Actual" onBack={onBack} />
+        <div className="p-6 flex flex-col items-center gap-3 text-center">
+          <ShieldAlert size={28} color={C.red} />
+          <div style={{ color: C.red, fontSize: 14 }}>Todavía no se cargó la Apertura de hoy. El stock actual se calcula a partir de ahí.</div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <Header title="Stock Actual" subtitle={`Apertura cargada a las ${aperturaHora}`} onBack={onBack} />
+      <div className="mx-4 mt-4 p-3 rounded-xl" style={{ background: C.paperDark, fontSize: 12, color: C.inkSoft }}>
+        Esto es solo para consultar — no se puede editar acá. Es apertura + reposiciones, sin restar nada todavía (las ventas se calculan recién en el Cierre).
+      </div>
+      <div className="p-4 flex flex-col gap-2">
+        {catalogo.map((p) => {
+          const repuesto = reposiciones.filter((r) => r.productoId === p.id).reduce((a, r) => a + r.cantidad, 0);
+          const disponible = round2((Number(aperturaStock[p.id]) || 0) + repuesto);
+          return (
+            <div key={p.id} className="flex items-center justify-between rounded-xl p-3" style={{ background: C.white, border: `1px solid ${C.line}` }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 600 }}>{p.nombre}</div>
+                {repuesto > 0 && <div style={{ fontSize: 11, color: C.inkSoft }}>Apertura {aperturaStock[p.id] || 0} + reposición {repuesto}</div>}
+              </div>
+              <div className="ticket-num" style={{ fontSize: 16, fontWeight: 700, color: C.tealDark }}>{disponible}</div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -1777,7 +1860,7 @@ function calcularCierre(catalogo, aperturaStock, reposiciones, sobrante, consumo
   return { detalle, recaudacionBruta: round2(recaudacionBruta), recaudacionEsperada, cajaReal, diferencia, deudaPorPersona, perdidasTotalPesos };
 }
 
-function BufetCierre({ bufetId, catalogo, personal, onBack }) {
+function BufetCierre({ bufetId, catalogo, personal, nivel, onBack }) {
   const [loading, setLoading] = useState(true);
   const [aperturaStock, setAperturaStock] = useState(null);
   const [reposiciones, setReposiciones] = useState([]);
@@ -1787,8 +1870,13 @@ function BufetCierre({ bufetId, catalogo, personal, onBack }) {
   const [pagos, setPagos] = useState({ efectivo: "", transferencia: "", qr: "", tarjeta: "" });
   const [fiado, setFiado] = useState("");
   const [yaCerrado, setYaCerrado] = useState(false);
+  const [responsableOriginal, setResponsableOriginal] = useState("");
   const [guardando, setGuardando] = useState(false);
   const [guardado, setGuardado] = useState(false);
+  const [motivoCorreccion, setMotivoCorreccion] = useState("");
+
+  const opcionesResponsable = [...personal.map((p) => p.nombre), "Supervisora"];
+  const [responsable, setResponsable] = useState(opcionesResponsable[0] || "");
 
   const [cPersonaId, setCPersonaId] = useState(personal[0]?.id || "");
   const [cProductoId, setCProductoId] = useState(catalogo[0]?.id || "");
@@ -1812,37 +1900,45 @@ function BufetCierre({ bufetId, catalogo, personal, onBack }) {
         const data = JSON.parse(cRaw);
         setSobrante(data.sobrante || {}); setConsumoPersonal(data.consumoPersonal || []); setPerdidas(data.perdidas || []);
         setPagos(data.pagos || { efectivo: "", transferencia: "", qr: "", tarjeta: "" }); setFiado(String(data.fiado || ""));
-        setYaCerrado(true);
+        setYaCerrado(true); setResponsableOriginal(data.responsable || "");
       }
       setLoading(false);
     })();
   }, [bufetId]);
 
+  const bloqueado = yaCerrado && nivel !== "supervisor";
+  const esCorreccion = yaCerrado && nivel === "supervisor";
+
   function agregarConsumo() {
-    if (!cPersonaId || !cProductoId || !cCantidad) return;
+    if (bloqueado || !cPersonaId || !cProductoId || !cCantidad) return;
     const persona = personal.find((p) => p.id === cPersonaId);
     const producto = catalogo.find((p) => p.id === cProductoId);
     setConsumoPersonal([...consumoPersonal, { id: Date.now().toString(), personaId: cPersonaId, personaNombre: persona?.nombre || "", productoId: cProductoId, productoNombre: producto?.nombre || "", cantidad: Number(cCantidad) }]);
     setCCantidad(1);
   }
-  function quitarConsumo(id) { setConsumoPersonal(consumoPersonal.filter((c) => c.id !== id)); }
+  function quitarConsumo(id) { if (!bloqueado) setConsumoPersonal(consumoPersonal.filter((c) => c.id !== id)); }
 
   function agregarPerdida() {
-    if (!lMonto) return;
+    if (bloqueado || !lMonto) return;
     const producto = catalogo.find((p) => p.id === lProductoId);
     setPerdidas([...perdidas, { id: Date.now().toString(), productoId: lProductoId, productoNombre: producto?.nombre || "", cantidad: Number(lCantidad) || 0, motivo: lMotivo.trim(), monto: Number(lMonto) }]);
     setLCantidad(1); setLMotivo(""); setLMonto("");
   }
-  function quitarPerdida(id) { setPerdidas(perdidas.filter((l) => l.id !== id)); }
+  function quitarPerdida(id) { if (!bloqueado) setPerdidas(perdidas.filter((l) => l.id !== id)); }
 
   const resumen = calcularCierre(catalogo, aperturaStock, reposiciones, sobrante, consumoPersonal, perdidas, pagos, fiado);
 
   async function confirmarCierre() {
+    if (esCorreccion && !motivoCorreccion.trim()) return;
     setGuardando(true);
-    const payload = { sobrante, consumoPersonal, perdidas, pagos, fiado: Number(fiado) || 0, ...resumen, hora: horaAhora(), cerrado: true };
+    const payload = { sobrante, consumoPersonal, perdidas, pagos, fiado: Number(fiado) || 0, ...resumen, hora: horaAhora(), cerrado: true, responsable };
     const ok = await safeSet(`bufet-cierre-${bufetId}-${fecha}`, JSON.stringify(payload));
+    if (ok) {
+      await registrarAuditoriaBufet(bufetId, fecha, responsable, esCorreccion ? "Corrigió cierre" : "Confirmó cierre",
+        esCorreccion ? `Motivo: ${motivoCorreccion.trim()}` : `Diferencia de caja: ${money(resumen.diferencia)}`);
+    }
     setGuardando(false);
-    if (ok) { setGuardado(true); setYaCerrado(true); }
+    if (ok) { setGuardado(true); setYaCerrado(true); setResponsableOriginal(responsable); setMotivoCorreccion(""); }
   }
 
   if (loading) return <div style={{ background: C.paper, minHeight: "100vh" }} className="flex items-center justify-center"><Loader2 className="animate-spin" color={C.inkSoft} /></div>;
@@ -1859,17 +1955,37 @@ function BufetCierre({ bufetId, catalogo, personal, onBack }) {
     );
   }
 
+  if (bloqueado) {
+    return (
+      <div>
+        <Header title="Cierre del Día" subtitle={formatFecha(fecha)} onBack={onBack} />
+        <div className="mx-4 mt-4 p-3 rounded-xl flex items-start gap-2" style={{ background: "#F5E4E2", border: `1px solid ${C.red}` }}>
+          <Lock size={18} color={C.red} className="flex-shrink-0 mt-0.5" />
+          <div style={{ fontSize: 12.5, color: C.red }}>El cierre de hoy ya fue confirmado por <strong>{responsableOriginal}</strong>. Si hace falta corregir algo, pedile a la supervisora que entre con su código.</div>
+        </div>
+        <div className="p-4">
+          <div className="rounded-2xl p-4" style={{ background: C.ink, color: C.white }}>
+            <div className="flex justify-between mt-1" style={{ fontSize: 13 }}><span>Recaudación esperada</span><span className="ticket-num">{money(resumen.recaudacionEsperada)}</span></div>
+            <div className="flex justify-between mt-1" style={{ fontSize: 13 }}><span>Caja real</span><span className="ticket-num">{money(resumen.cajaReal)}</span></div>
+            <div className="flex justify-between mt-1" style={{ fontSize: 16, fontWeight: 700 }}><span>Diferencia</span><span className="ticket-num" style={{ color: resumen.diferencia < 0 ? C.red : C.green }}>{money(resumen.diferencia)}</span></div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div>
       <Header title="Cierre del Día" subtitle={formatFecha(fecha)} onBack={onBack} />
       {guardado && (
         <div className="mx-4 mt-4 p-3 rounded-xl text-center" style={{ background: "#E3EFE8", border: `1px solid ${C.green}`, fontSize: 13, color: C.tealDark, fontWeight: 700 }}>✓ Cierre guardado.</div>
       )}
-      {yaCerrado && !guardado && (
-        <div className="mx-4 mt-4 p-3 rounded-xl" style={{ background: "#FDECC8", fontSize: 12.5, color: C.inkSoft }}>Ya había un cierre cargado hoy. Si volvés a confirmar, se reemplaza.</div>
+      {esCorreccion && !guardado && (
+        <div className="mx-4 mt-4 p-3 rounded-xl" style={{ background: "#FDECC8", fontSize: 12.5, color: C.inkSoft }}>Ya había un cierre cargado hoy por {responsableOriginal}. Estás corrigiéndolo como supervisora — dejá el motivo antes de confirmar.</div>
       )}
 
       <div className="p-4 flex flex-col gap-6">
+        <Field label="¿Quién cierra?"><Select value={responsable} onChange={setResponsable} options={opcionesResponsable.map((n) => ({ value: n, label: n }))} /></Field>
         {/* 1. Sobrante */}
         <div>
           <SectionLabel>1. Stock que sobró</SectionLabel>
@@ -1973,8 +2089,11 @@ function BufetCierre({ bufetId, catalogo, personal, onBack }) {
           )}
         </div>
 
-        <button onClick={confirmarCierre} disabled={guardando} className="w-full rounded-xl py-4 display-font flex items-center justify-center gap-2" style={{ background: C.amber, color: C.white, fontSize: 22 }}>
-          {guardando ? <Loader2 className="animate-spin" size={22} /> : <Check size={22} />} Confirmar Cierre
+        {esCorreccion && (
+          <Field label="Motivo de la corrección (obligatorio)"><input value={motivoCorreccion} onChange={(e) => setMotivoCorreccion(e.target.value)} className="w-full rounded-lg px-3 py-2" style={{ border: `1px solid ${C.line}` }} placeholder="Ej: se cargó mal el sobrante de gaseosa..." /></Field>
+        )}
+        <button onClick={confirmarCierre} disabled={guardando || (esCorreccion && !motivoCorreccion.trim())} className="w-full rounded-xl py-4 display-font flex items-center justify-center gap-2" style={{ background: C.amber, color: C.white, fontSize: 22, opacity: (esCorreccion && !motivoCorreccion.trim()) ? 0.5 : 1 }}>
+          {guardando ? <Loader2 className="animate-spin" size={22} /> : <Check size={22} />} {esCorreccion ? "Guardar corrección" : "Confirmar Cierre"}
         </button>
       </div>
     </div>
@@ -1985,6 +2104,7 @@ function BufetCierre({ bufetId, catalogo, personal, onBack }) {
 function BufetHistorial({ bufetId, catalogo, onBack }) {
   const [fecha, setFecha] = useState(todayKey());
   const [cierre, setCierre] = useState(null);
+  const [auditoria, setAuditoria] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -1992,6 +2112,8 @@ function BufetHistorial({ bufetId, catalogo, onBack }) {
       setLoading(true);
       const raw = await safeGet(`bufet-cierre-${bufetId}-${fecha}`);
       setCierre(raw ? JSON.parse(raw) : null);
+      const list = await safeListPrefix(`bufet-auditoria-${bufetId}-${fecha}-`);
+      setAuditoria(list.map((r) => r.value).sort((a, b) => (a.hora < b.hora ? 1 : -1)));
       setLoading(false);
     })();
   }, [bufetId, fecha]);
@@ -2006,31 +2128,49 @@ function BufetHistorial({ bufetId, catalogo, onBack }) {
       </div>
       {loading ? (
         <div className="p-8 flex justify-center"><Loader2 className="animate-spin" color={C.inkSoft} /></div>
-      ) : !cierre ? (
-        <div className="p-4"><EmptyNote text="No hay cierre cargado para este día." /></div>
       ) : (
         <div className="p-4 flex flex-col gap-5">
-          <div className="rounded-2xl p-4" style={{ background: C.ink, color: C.white }}>
-            <div className="flex justify-between mt-1" style={{ fontSize: 13 }}><span>Recaudación esperada</span><span className="ticket-num">{money(cierre.recaudacionEsperada)}</span></div>
-            <div className="flex justify-between mt-1" style={{ fontSize: 13 }}><span>Caja real</span><span className="ticket-num">{money(cierre.cajaReal)}</span></div>
-            <div className="flex justify-between mt-1" style={{ fontSize: 18, fontWeight: 700 }}><span>Diferencia</span><span className="ticket-num" style={{ color: cierre.diferencia < 0 ? C.red : C.green }}>{money(cierre.diferencia)}</span></div>
-            <div className="flex justify-between mt-3 pt-2" style={{ fontSize: 12, opacity: 0.8, borderTop: "1px dashed rgba(255,255,255,0.3)" }}><span>Pérdidas del día</span><span className="ticket-num">{money(cierre.perdidasTotalPesos)}</span></div>
-            <div className="flex justify-between" style={{ fontSize: 12, opacity: 0.8 }}><span>Fiado</span><span className="ticket-num">{money(cierre.fiado)}</span></div>
-          </div>
-          <div>
-            <SectionLabel>Venta por producto</SectionLabel>
-            <ReceiptList>{(cierre.detalle || []).filter((d) => d.vendidoAlPublico > 0).map((d) => (
-              <ReceiptRow key={d.id} left={d.nombre} right={`${d.vendidoAlPublico} u. · ${money(d.recaudacionProducto)}`} />
-            ))}</ReceiptList>
-          </div>
-          {Object.keys(cierre.deudaPorPersona || {}).length > 0 && (
-            <div>
-              <SectionLabel>Consumo de personal (a descontar)</SectionLabel>
-              <ReceiptList>{Object.entries(cierre.deudaPorPersona).map(([nombre, monto]) => (
-                <ReceiptRow key={nombre} left={nombre} right={money(monto)} />
-              ))}</ReceiptList>
-            </div>
+          {!cierre ? (
+            <EmptyNote text="No hay cierre cargado para este día." />
+          ) : (
+            <>
+              <div className="rounded-2xl p-4" style={{ background: C.ink, color: C.white }}>
+                <div className="flex justify-between mt-1" style={{ fontSize: 13 }}><span>Recaudación esperada</span><span className="ticket-num">{money(cierre.recaudacionEsperada)}</span></div>
+                <div className="flex justify-between mt-1" style={{ fontSize: 13 }}><span>Caja real</span><span className="ticket-num">{money(cierre.cajaReal)}</span></div>
+                <div className="flex justify-between mt-1" style={{ fontSize: 18, fontWeight: 700 }}><span>Diferencia</span><span className="ticket-num" style={{ color: cierre.diferencia < 0 ? C.red : C.green }}>{money(cierre.diferencia)}</span></div>
+                <div className="flex justify-between mt-3 pt-2" style={{ fontSize: 12, opacity: 0.8, borderTop: "1px dashed rgba(255,255,255,0.3)" }}><span>Pérdidas del día</span><span className="ticket-num">{money(cierre.perdidasTotalPesos)}</span></div>
+                <div className="flex justify-between" style={{ fontSize: 12, opacity: 0.8 }}><span>Fiado</span><span className="ticket-num">{money(cierre.fiado)}</span></div>
+              </div>
+              <div>
+                <SectionLabel>Venta por producto</SectionLabel>
+                <ReceiptList>{(cierre.detalle || []).filter((d) => d.vendidoAlPublico > 0).map((d) => (
+                  <ReceiptRow key={d.id} left={d.nombre} right={`${d.vendidoAlPublico} u. · ${money(d.recaudacionProducto)}`} />
+                ))}</ReceiptList>
+              </div>
+              {Object.keys(cierre.deudaPorPersona || {}).length > 0 && (
+                <div>
+                  <SectionLabel>Consumo de personal (a descontar)</SectionLabel>
+                  <ReceiptList>{Object.entries(cierre.deudaPorPersona).map(([nombre, monto]) => (
+                    <ReceiptRow key={nombre} left={nombre} right={money(monto)} />
+                  ))}</ReceiptList>
+                </div>
+              )}
+            </>
           )}
+          <div>
+            <SectionLabel>Registro de cambios del día</SectionLabel>
+            {auditoria.length === 0 ? <EmptyNote text="No hubo cargas ni correcciones registradas este día." /> : (
+              <div className="flex flex-col gap-2">
+                {auditoria.map((it) => (
+                  <div key={it.id} className="rounded-xl p-3" style={{ background: C.white, border: `1px solid ${C.line}` }}>
+                    <div className="flex items-center justify-between"><span style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>{it.accion}</span><span className="ticket-num" style={{ fontSize: 12, color: C.inkSoft }}>{it.hora}</span></div>
+                    <div style={{ fontSize: 12.5, color: C.inkSoft, marginTop: 3 }}>{it.detalle}</div>
+                    <div style={{ fontSize: 11.5, color: C.teal, marginTop: 4, fontWeight: 600 }}>Por: {it.responsable}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
