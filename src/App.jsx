@@ -1522,7 +1522,8 @@ function ListaSimpleConfig({ items, onGuardar, placeholder }) {
 }
 
 // ================= MÓDULO: CONTROL DE BUFET =================
-const DESCUENTO_PERSONAL = { comida: 0.15, bebida: 0.10 };
+const DESCUENTO_PERSONAL = { comida: 0.15, bebida: 0.10, golosina: 0.10 };
+function labelTipoBufet(tipo) { return tipo === "bebida" ? "Bebida" : tipo === "golosina" ? "Golosina" : "Comida"; }
 
 function BufetModule({ onBack }) {
   const [sub, setSub] = useState("select");
@@ -1702,7 +1703,7 @@ function BufetApertura({ bufetId, catalogo, personal, nivel, onBack }) {
           <div key={p.id} className="flex items-center justify-between gap-2 rounded-xl p-3" style={{ background: C.white, border: `1px solid ${C.line}`, opacity: bloqueado ? 0.5 : 1 }}>
             <div className="min-w-0 flex-1">
               <div style={{ fontSize: 13.5, fontWeight: 600 }}>{p.nombre}</div>
-              <div style={{ fontSize: 11, color: C.inkSoft }}>{p.tipo === "bebida" ? "Bebida" : "Comida"}</div>
+              <div style={{ fontSize: 11, color: C.inkSoft }}>{labelTipoBufet(p.tipo)}</div>
             </div>
             <input disabled={bloqueado} type="number" value={valores[p.id] ?? ""} onChange={(e) => setValores({ ...valores, [p.id]: e.target.value })} className="text-center rounded-lg ticket-num" style={{ width: 70, fontSize: 15, border: `1px solid ${C.line}`, padding: "6px 0" }} />
           </div>
@@ -2218,7 +2219,7 @@ function BufetConfig({ catalogo, personal, accesos, onGuardarCatalogo, onGuardar
             <div className="rounded-xl p-3 flex flex-col gap-3" style={{ background: C.paperDark }}>
               <Field label="Nombre del producto"><input value={nombre} onChange={(e) => setNombre(e.target.value)} className="w-full rounded-lg px-3 py-2" style={{ border: `1px solid ${C.line}` }} placeholder="Ej: Pebete" /></Field>
               <div className="flex gap-2">
-                <Field label="Tipo"><Select value={tipo} onChange={setTipo} options={[{ value: "comida", label: "Comida" }, { value: "bebida", label: "Bebida" }]} /></Field>
+                <Field label="Tipo"><Select value={tipo} onChange={setTipo} options={[{ value: "comida", label: "Comida" }, { value: "bebida", label: "Bebida" }, { value: "golosina", label: "Golosina" }]} /></Field>
                 <Field label="Precio al público"><input type="number" value={precioVenta} onChange={(e) => setPrecioVenta(e.target.value)} className="w-full rounded-lg px-3 py-2" style={{ border: `1px solid ${C.line}` }} placeholder="$" /></Field>
               </div>
               <button onClick={agregarProducto} className="rounded-lg py-2.5 flex items-center justify-center gap-1" style={{ background: C.teal, color: C.white, fontWeight: 600, fontSize: 14 }}><Plus size={16} /> Agregar producto</button>
@@ -2228,7 +2229,7 @@ function BufetConfig({ catalogo, personal, accesos, onGuardarCatalogo, onGuardar
                 <div key={p.id} className="flex items-center justify-between gap-2 rounded-xl p-3" style={{ background: C.white, border: `1px solid ${C.line}` }}>
                   <div className="min-w-0 flex-1">
                     <div style={{ fontSize: 14, fontWeight: 600 }}>{p.nombre}</div>
-                    <div style={{ fontSize: 11.5, color: C.inkSoft }}>{p.tipo === "bebida" ? "Bebida" : "Comida"}</div>
+                    <div style={{ fontSize: 11.5, color: C.inkSoft }}>{labelTipoBufet(p.tipo)}</div>
                   </div>
                   <input type="number" defaultValue={p.precioVenta} onBlur={(e) => actualizarPrecio(p.id, e.target.value)} className="text-center rounded-lg ticket-num" style={{ width: 80, fontSize: 14, border: `1px solid ${C.line}`, padding: "6px 0" }} />
                   <button onClick={() => borrarProducto(p.id)} className="p-2 rounded-full flex-shrink-0" style={{ color: C.red }}><Trash2 size={16} /></button>
