@@ -1568,6 +1568,7 @@ function BufetModule({ onBack }) {
   async function guardarCatalogoBufet(data) { setCatalogo(data); await safeSet(`bufet-catalogo-${bufetId}`, JSON.stringify(data)); }
   async function guardarPersonalBufet(data) { setPersonal(data); await safeSet(`bufet-personal-${bufetId}`, JSON.stringify(data)); }
   async function guardarAccesosBufet(data) { setAccesos(data); await safeSet(`bufet-accesos-${bufetId}`, JSON.stringify(data)); }
+  async function refrescarPersonal() { const raw = await safeGet(`bufet-personal-${bufetId}`); setPersonal(raw ? JSON.parse(raw) : []); }
 
   const bufetNombre = bufetsList.find((b) => b.id === bufetId)?.nombre || "";
 
@@ -1578,8 +1579,8 @@ function BufetModule({ onBack }) {
   if (sub === "home") return <BufetHome nombre={bufetNombre} nivel={nivel} setSub={setSub} onBack={onBack} />;
   if (sub === "apertura") return <BufetApertura bufetId={bufetId} catalogo={catalogo} personal={personal} nivel={nivel} onBack={() => setSub("home")} />;
   if (sub === "stockActual") return <BufetStockActual bufetId={bufetId} catalogo={catalogo} onBack={() => setSub("home")} />;
-  if (sub === "reposicion") return <BufetReposicion bufetId={bufetId} catalogo={catalogo} onBack={() => setSub("home")} />;
-  if (sub === "cierre") return <BufetCierre bufetId={bufetId} catalogo={catalogo} personal={personal} nivel={nivel} onBack={() => setSub("home")} />;
+  if (sub === "reposicion") return <BufetReposicion bufetId={bufetId} catalogo={catalogo} personal={personal} onBack={() => setSub("home")} />;
+  if (sub === "cierre") return <BufetCierre bufetId={bufetId} catalogo={catalogo} personal={personal} nivel={nivel} onPersonalActualizado={refrescarPersonal} onBack={() => setSub("home")} />;
   if (sub === "historial") return <BufetHistorial bufetId={bufetId} catalogo={catalogo} nivel={nivel} onBack={() => setSub("home")} />;
   if (sub === "config") return (
     <BufetConfig catalogo={catalogo} personal={personal} accesos={accesos}
@@ -1780,11 +1781,13 @@ function BufetStockActual({ bufetId, catalogo, onBack }) {
 }
 
 // ---- Reposición ----
-function BufetReposicion({ bufetId, catalogo, onBack }) {
+function BufetReposicion({ bufetId, catalogo, personal, onBack }) {
   const [productoId, setProductoId] = useState(catalogo[0]?.id || "");
   const [cantidad, setCantidad] = useState(1);
   const [entradas, setEntradas] = useState([]);
   const [loading, setLoading] = useState(true);
+  const opcionesResponsable = [...personal.map((p) => p.nombre), "Supervisora"];
+  const [responsable, setResponsable] = useState(opcionesResponsable[0] || "");
   const fecha = todayKey();
 
   async function cargar() {
@@ -1798,8 +1801,9 @@ function BufetReposicion({ bufetId, catalogo, onBack }) {
     if (!productoId || !cantidad || cantidad <= 0) return;
     const producto = catalogo.find((p) => p.id === productoId);
     const id = Date.now().toString();
-    const entry = { id, productoId, productoNombre: producto?.nombre || "", cantidad: Number(cantidad), hora: horaAhora() };
+    const entry = { id, productoId, productoNombre: producto?.nombre || "", cantidad: Number(cantidad), hora: horaAhora(), responsable };
     await safeSet(`bufet-reposicion-${bufetId}-${fecha}-${id}`, JSON.stringify(entry));
+    await registrarAuditoriaBufet(bufetId, fecha, responsable, "Agregó reposición", `${producto?.nombre || ""}: ${cantidad}`);
     setCantidad(1);
     cargar();
   }
@@ -1811,6 +1815,7 @@ function BufetReposicion({ bufetId, catalogo, onBack }) {
     <div>
       <Header title="Reposición" subtitle="Stock que se suma durante el día" onBack={onBack} />
       <div className="p-4 flex flex-col gap-4">
+        <Field label="¿Quién repone?"><Select value={responsable} onChange={setResponsable} options={opcionesResponsable.map((n) => ({ value: n, label: n }))} /></Field>
         <Field label="Producto"><Select value={productoId} onChange={setProductoId} options={catalogo.map((p) => ({ value: p.id, label: p.nombre }))} /></Field>
         <Field label="Cantidad"><Stepper value={cantidad} setValue={setCantidad} /></Field>
         <button onClick={guardar} className="w-full rounded-xl py-4 display-font flex items-center justify-center gap-2" style={{ background: C.amber, color: C.white, fontSize: 20 }}><Check size={20} /> Agregar</button>
@@ -1821,7 +1826,10 @@ function BufetReposicion({ bufetId, catalogo, onBack }) {
           <div className="flex flex-col gap-2">
             {entradas.map((e) => (
               <div key={e.id} className="flex items-center justify-between rounded-xl p-3" style={{ background: C.white, border: `1px solid ${C.line}` }}>
-                <span style={{ fontSize: 14 }}>{e.productoNombre}</span>
+                <div className="min-w-0">
+                  <span style={{ fontSize: 14 }}>{e.productoNombre}</span>
+                  {e.responsable && <div style={{ fontSize: 11, color: C.inkSoft }}>{e.responsable}</div>}
+                </div>
                 <span className="ticket-num" style={{ fontSize: 13, color: C.inkSoft }}>{e.cantidad} · {e.hora}</span>
               </div>
             ))}
@@ -1861,7 +1869,7 @@ function calcularCierre(catalogo, aperturaStock, reposiciones, sobrante, consumo
   return { detalle, recaudacionBruta: round2(recaudacionBruta), recaudacionEsperada, cajaReal, diferencia, deudaPorPersona, perdidasTotalPesos };
 }
 
-function BufetCierre({ bufetId, catalogo, personal, nivel, onBack }) {
+function BufetCierre({ bufetId, catalogo, personal, nivel, onPersonalActualizado, onBack }) {
   const [loading, setLoading] = useState(true);
   const [aperturaStock, setAperturaStock] = useState(null);
   const [reposiciones, setReposiciones] = useState([]);
@@ -1871,6 +1879,7 @@ function BufetCierre({ bufetId, catalogo, personal, nivel, onBack }) {
   const [pagos, setPagos] = useState({ efectivo: "", transferencia: "", qr: "", tarjeta: "" });
   const [fiado, setFiado] = useState("");
   const [yaCerrado, setYaCerrado] = useState(false);
+  const [deudaOriginal, setDeudaOriginal] = useState({});
   const [responsableOriginal, setResponsableOriginal] = useState("");
   const [guardando, setGuardando] = useState(false);
   const [guardado, setGuardado] = useState(false);
@@ -1901,7 +1910,7 @@ function BufetCierre({ bufetId, catalogo, personal, nivel, onBack }) {
         const data = JSON.parse(cRaw);
         setSobrante(data.sobrante || {}); setConsumoPersonal(data.consumoPersonal || []); setPerdidas(data.perdidas || []);
         setPagos(data.pagos || { efectivo: "", transferencia: "", qr: "", tarjeta: "" }); setFiado(String(data.fiado || ""));
-        setYaCerrado(true); setResponsableOriginal(data.responsable || "");
+        setYaCerrado(true); setResponsableOriginal(data.responsable || ""); setDeudaOriginal(data.deudaPorPersona || {});
       }
       setLoading(false);
     })();
@@ -1937,6 +1946,21 @@ function BufetCierre({ bufetId, catalogo, personal, nivel, onBack }) {
     if (ok) {
       await registrarAuditoriaBufet(bufetId, fecha, responsable, esCorreccion ? "Corrigió cierre" : "Confirmó cierre",
         esCorreccion ? `Motivo: ${motivoCorreccion.trim()}` : `Diferencia de caja: ${money(resumen.diferencia)}`);
+      // Aplica al acumulado de cada persona solo la DIFERENCIA contra lo que ya estaba sumado (evita duplicar si se corrige un cierre)
+      const nombres = new Set([...Object.keys(resumen.deudaPorPersona), ...Object.keys(deudaOriginal)]);
+      if (nombres.size > 0) {
+        const rawPersonal = await safeGet(`bufet-personal-${bufetId}`);
+        let arrPersonal = rawPersonal ? JSON.parse(rawPersonal) : [];
+        let cambio = false;
+        nombres.forEach((nombre) => {
+          const delta = round2((resumen.deudaPorPersona[nombre] || 0) - (deudaOriginal[nombre] || 0));
+          if (delta === 0) return;
+          const idx = arrPersonal.findIndex((p) => p.nombre === nombre);
+          if (idx >= 0) { arrPersonal[idx] = { ...arrPersonal[idx], consumoAcumulado: round2((arrPersonal[idx].consumoAcumulado || 0) + delta) }; cambio = true; }
+        });
+        if (cambio) { await safeSet(`bufet-personal-${bufetId}`, JSON.stringify(arrPersonal)); if (onPersonalActualizado) await onPersonalActualizado(); }
+      }
+      setDeudaOriginal(resumen.deudaPorPersona);
     }
     setGuardando(false);
     if (ok) { setGuardado(true); setYaCerrado(true); setResponsableOriginal(responsable); setMotivoCorreccion(""); }
@@ -2248,12 +2272,16 @@ function BufetConfig({ catalogo, personal, accesos, onGuardarCatalogo, onGuardar
             <div className="flex flex-col gap-2">
               {personal.map((p) => (
                 <div key={p.id} className="flex items-center justify-between gap-2 rounded-xl p-3" style={{ background: C.white, border: `1px solid ${C.line}` }}>
-                  <div style={{ fontSize: 14, fontWeight: 600, flex: 1 }}>{p.nombre}</div>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontSize: 14, fontWeight: 600 }}>{p.nombre}</div>
+                    <div style={{ fontSize: 11, color: C.inkSoft }}>Consumo acumulado: <span style={{ fontWeight: 700, color: (p.consumoAcumulado || 0) > 0 ? C.tealDark : C.inkSoft }}>{money(p.consumoAcumulado || 0)}</span></div>
+                  </div>
                   <input type="number" defaultValue={p.precioHora} onBlur={(e) => actualizarPrecioHora(p.id, e.target.value)} className="text-center rounded-lg ticket-num" style={{ width: 80, fontSize: 14, border: `1px solid ${C.line}`, padding: "6px 0" }} />
                   <button onClick={() => borrarPersona(p.id)} className="p-2 rounded-full flex-shrink-0" style={{ color: C.red }}><Trash2 size={16} /></button>
                 </div>
               ))}
             </div>
+            {personal.length > 0 && <div style={{ fontSize: 11, color: C.inkSoft }}>El consumo acumulado se suma solo con cada Cierre confirmado. Todavía no se resetea con la quincena — eso lo agregamos junto con el módulo de sueldo.</div>}
           </div>
         )}
         {tab === "accesos" && (
