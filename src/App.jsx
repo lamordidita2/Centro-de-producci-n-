@@ -1524,12 +1524,16 @@ function ListaSimpleConfig({ items, onGuardar, placeholder }) {
 // ================= MÓDULO: CONTROL DE BUFET =================
 const DESCUENTO_PERSONAL = { comida: 0.15, bebida: 0.10, golosina: 0.10 };
 function labelTipoBufet(tipo) { return tipo === "bebida" ? "Bebida" : tipo === "golosina" ? "Golosina" : "Comida"; }
+const TURNOS = [{ id: "manana", label: "Mañana" }, { id: "tarde", label: "Tarde" }, { id: "noche", label: "Noche" }];
+function turnoAnterior(turno) { return turno === "tarde" ? "manana" : turno === "noche" ? "tarde" : null; }
+const DUENO_NOMBRES = ["Brian", "Emanuel"];
 
 function BufetModule({ onBack }) {
   const [sub, setSub] = useState("select");
   const [bufetsList, setBufetsList] = useState([]);
   const [bufetId, setBufetId] = useState(null);
-  const [nivel, setNivel] = useState(null); // "staff" | "supervisor"
+  const [nivel, setNivel] = useState(null); // "staff" | "supervisor" | "dueno"
+  const [turno, setTurno] = useState("manana");
   const [pinInput, setPinInput] = useState("");
   const [pinError, setPinError] = useState(false);
   const [catalogo, setCatalogo] = useState([]);
@@ -1551,7 +1555,7 @@ function BufetModule({ onBack }) {
     let cat = await safeGet(`bufet-catalogo-${id}`); cat = cat ? JSON.parse(cat) : [];
     let per = await safeGet(`bufet-personal-${id}`); per = per ? JSON.parse(per) : [];
     let acc = await safeGet(`bufet-accesos-${id}`);
-    if (!acc) { acc = { staff: "1111", supervisor: "2222" }; await safeSet(`bufet-accesos-${id}`, JSON.stringify(acc)); } else acc = JSON.parse(acc);
+    if (!acc) { acc = { staff: "1111", supervisor: "2222", dueno: "9999" }; await safeSet(`bufet-accesos-${id}`, JSON.stringify(acc)); } else { acc = JSON.parse(acc); if (!acc.dueno) acc.dueno = "9999"; }
     setCatalogo(cat); setPersonal(per); setAccesos(acc);
     setLoading(false);
     setPinInput(""); setPinError(false);
@@ -1560,7 +1564,8 @@ function BufetModule({ onBack }) {
 
   function confirmarPin() {
     if (!accesos) return;
-    if (pinInput === accesos.supervisor) { setNivel("supervisor"); setSub("home"); }
+    if (pinInput === accesos.dueno) { setNivel("dueno"); setSub("home"); }
+    else if (pinInput === accesos.supervisor) { setNivel("supervisor"); setSub("home"); }
     else if (pinInput === accesos.staff) { setNivel("staff"); setSub("home"); }
     else { setPinError(true); setPinInput(""); }
   }
@@ -1576,14 +1581,14 @@ function BufetModule({ onBack }) {
 
   if (sub === "select") return <BufetSelect bufets={bufetsList} onElegir={elegirBufet} onBack={onBack} />;
   if (sub === "pin") return <BufetPinScreen nombre={bufetNombre} pinInput={pinInput} setPinInput={setPinInput} pinError={pinError} onConfirmar={confirmarPin} onBack={() => setSub("select")} />;
-  if (sub === "home") return <BufetHome nombre={bufetNombre} nivel={nivel} setSub={setSub} onBack={onBack} />;
-  if (sub === "apertura") return <BufetApertura bufetId={bufetId} catalogo={catalogo} personal={personal} nivel={nivel} onBack={() => setSub("home")} />;
-  if (sub === "stockActual") return <BufetStockActual bufetId={bufetId} catalogo={catalogo} onBack={() => setSub("home")} />;
-  if (sub === "reposicion") return <BufetReposicion bufetId={bufetId} catalogo={catalogo} personal={personal} onBack={() => setSub("home")} />;
-  if (sub === "cierre") return <BufetCierre bufetId={bufetId} catalogo={catalogo} personal={personal} nivel={nivel} onPersonalActualizado={refrescarPersonal} onBack={() => setSub("home")} />;
+  if (sub === "home") return <BufetHome nombre={bufetNombre} nivel={nivel} turno={turno} setTurno={setTurno} setSub={setSub} onBack={onBack} />;
+  if (sub === "apertura") return <BufetApertura bufetId={bufetId} catalogo={catalogo} personal={personal} nivel={nivel} turno={turno} onBack={() => setSub("home")} />;
+  if (sub === "stockActual") return <BufetStockActual bufetId={bufetId} catalogo={catalogo} turno={turno} onBack={() => setSub("home")} />;
+  if (sub === "reposicion") return <BufetReposicion bufetId={bufetId} catalogo={catalogo} personal={personal} turno={turno} onBack={() => setSub("home")} />;
+  if (sub === "cierre") return <BufetCierre bufetId={bufetId} catalogo={catalogo} personal={personal} nivel={nivel} turno={turno} onPersonalActualizado={refrescarPersonal} onBack={() => setSub("home")} />;
   if (sub === "historial") return <BufetHistorial bufetId={bufetId} catalogo={catalogo} nivel={nivel} onBack={() => setSub("home")} />;
   if (sub === "config") return (
-    <BufetConfig catalogo={catalogo} personal={personal} accesos={accesos}
+    <BufetConfig catalogo={catalogo} personal={personal} accesos={accesos} nivel={nivel}
       onGuardarCatalogo={guardarCatalogoBufet} onGuardarPersonal={guardarPersonalBufet} onGuardarAccesos={guardarAccesosBufet}
       onBack={() => setSub("home")} />
   );
@@ -1624,17 +1629,27 @@ function BufetPinScreen({ nombre, pinInput, setPinInput, pinError, onConfirmar, 
   );
 }
 
-function BufetHome({ nombre, nivel, setSub, onBack }) {
+function BufetHome({ nombre, nivel, turno, setTurno, setSub, onBack }) {
   return (
     <div>
-      <Header title={nombre} subtitle={formatFecha(todayKey())} onBack={onBack} />
+      <Header title={nombre} subtitle={`${formatFecha(todayKey())} · ${TURNOS.find((t) => t.id === turno)?.label}`} onBack={onBack} />
+      <div className="px-4 pt-4">
+        <div style={{ fontSize: 12, color: C.inkSoft, marginBottom: 6, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" }}>Turno</div>
+        <div className="flex gap-2">
+          {TURNOS.map((t) => (
+            <button key={t.id} onClick={() => setTurno(t.id)} className="flex-1 rounded-xl py-2.5 display-font" style={{ background: turno === t.id ? C.ink : C.paperDark, color: turno === t.id ? C.white : C.inkSoft, fontSize: 16 }}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
       <div className="p-4 flex flex-col gap-3">
         <Tile icon={<Package size={26} color={C.white} />} bg={C.teal} title="Apertura" desc="Contar lo que llegó / hay para vender hoy" onClick={() => setSub("apertura")} />
         <Tile icon={<Boxes size={26} color={C.white} />} bg={C.tealDark} title="Stock Actual" desc="Ver cuánto debería haber ahora (solo lectura)" onClick={() => setSub("stockActual")} />
         <Tile icon={<Plus size={26} color={C.white} />} bg={C.amber} title="Reposición" desc="Sumar stock si llega más durante el día" onClick={() => setSub("reposicion")} />
         <Tile icon={<BarChart3 size={26} color={C.white} />} bg={C.ink} title="Cierre del Día" desc="Sobrante, consumo, pérdidas, caja y fiado" onClick={() => setSub("cierre")} />
         <Tile icon={<History size={26} color={C.white} />} bg={C.inkSoft} title="Historial" desc="Ver cierres y diferencias de otros días" onClick={() => setSub("historial")} />
-        {nivel === "supervisor" && (
+        {(nivel === "supervisor" || nivel === "dueno") && (
           <Tile icon={<Settings size={26} color={C.white} />} bg={C.tealDark} title="Configuración de Bufet" desc="Catálogo, precios, personal y códigos" onClick={() => setSub("config")} />
         )}
       </div>
@@ -1647,10 +1662,11 @@ function EmptyCatalogBufet({ onBack }) {
 }
 
 // ---- Apertura ----
-function BufetApertura({ bufetId, catalogo, personal, nivel, onBack }) {
+function BufetApertura({ bufetId, catalogo, personal, nivel, turno, onBack }) {
   const [valores, setValores] = useState({});
   const [loading, setLoading] = useState(true);
   const [yaCargada, setYaCargada] = useState(false);
+  const [sugeridoDeAnterior, setSugeridoDeAnterior] = useState(false);
   const [responsableOriginal, setResponsableOriginal] = useState("");
   const [guardando, setGuardando] = useState(false);
   const [guardado, setGuardado] = useState(false);
@@ -1658,30 +1674,39 @@ function BufetApertura({ bufetId, catalogo, personal, nivel, onBack }) {
   const [responsable, setResponsable] = useState(opcionesResponsable[0] || "");
   const [motivo, setMotivo] = useState("");
   const fecha = todayKey();
+  const turnoLabel = TURNOS.find((t) => t.id === turno)?.label || "";
+  const anterior = turnoAnterior(turno);
 
   useEffect(() => {
     (async () => {
-      const raw = await safeGet(`bufet-apertura-${bufetId}-${fecha}`);
-      if (raw) { const data = JSON.parse(raw); setValores(data.stock || {}); setYaCargada(true); setResponsableOriginal(data.responsable || ""); }
+      setLoading(true);
+      const raw = await safeGet(`bufet-apertura-${bufetId}-${fecha}-${turno}`);
+      if (raw) {
+        const data = JSON.parse(raw); setValores(data.stock || {}); setYaCargada(true); setResponsableOriginal(data.responsable || "");
+      } else if (anterior) {
+        // Todavía no hay apertura para este turno: proponemos el sobrante del turno anterior como punto de partida
+        const cRaw = await safeGet(`bufet-cierre-${bufetId}-${fecha}-${anterior}`);
+        if (cRaw) { setValores(JSON.parse(cRaw).sobrante || {}); setSugeridoDeAnterior(true); }
+      }
       setLoading(false);
     })();
-  }, [bufetId]);
+  }, [bufetId, turno]);
 
-  const bloqueado = yaCargada && nivel !== "supervisor";
-  const esCorreccion = yaCargada && nivel === "supervisor";
+  const bloqueado = yaCargada && nivel !== "supervisor" && nivel !== "dueno";
+  const esCorreccion = yaCargada && (nivel === "supervisor" || nivel === "dueno");
 
   async function guardar() {
     if (esCorreccion && !motivo.trim()) return;
     setGuardando(true);
     const stock = {};
     catalogo.forEach((p) => { stock[p.id] = Number(valores[p.id]) || 0; });
-    const ok = await safeSet(`bufet-apertura-${bufetId}-${fecha}`, JSON.stringify({ stock, hora: horaAhora(), cargado: true, responsable }));
+    const ok = await safeSet(`bufet-apertura-${bufetId}-${fecha}-${turno}`, JSON.stringify({ stock, hora: horaAhora(), cargado: true, responsable }));
     if (ok) {
       await registrarAuditoriaBufet(bufetId, fecha, responsable, esCorreccion ? "Corrigió apertura" : "Cargó apertura",
-        esCorreccion ? `Motivo: ${motivo.trim()}` : "Apertura del día registrada.");
+        esCorreccion ? `Turno ${turnoLabel}. Motivo: ${motivo.trim()}` : `Turno ${turnoLabel} registrado.`);
     }
     setGuardando(false);
-    if (ok) { setGuardado(true); setYaCargada(true); setResponsableOriginal(responsable); setMotivo(""); setTimeout(() => setGuardado(false), 2000); }
+    if (ok) { setGuardado(true); setYaCargada(true); setResponsableOriginal(responsable); setMotivo(""); setSugeridoDeAnterior(false); setTimeout(() => setGuardado(false), 2000); }
   }
 
   if (loading) return <div style={{ background: C.paper, minHeight: "100vh" }} className="flex items-center justify-center"><Loader2 className="animate-spin" color={C.inkSoft} /></div>;
@@ -1689,17 +1714,22 @@ function BufetApertura({ bufetId, catalogo, personal, nivel, onBack }) {
 
   return (
     <div>
-      <Header title="Apertura del Día" subtitle={formatFecha(fecha)} onBack={onBack} />
+      <Header title="Apertura del Día" subtitle={`${formatFecha(fecha)} · ${turnoLabel}`} onBack={onBack} />
       {yaCargada && (
         <div className="mx-4 mt-4 p-3 rounded-xl" style={{ background: bloqueado ? "#F5E4E2" : "#E3EFE8", border: `1px solid ${bloqueado ? C.red : C.green}`, fontSize: 12.5, color: bloqueado ? C.red : C.tealDark }}>
           {bloqueado
-            ? `Ya se cargó la apertura de hoy (${responsableOriginal}). Para corregirla, pedile a la supervisora que entre con su código.`
-            : `Ya se cargó la apertura de hoy (${responsableOriginal}). Podés corregirla porque entraste como supervisora — dejá el motivo abajo.`}
+            ? `Ya se cargó la apertura de este turno (${responsableOriginal}). Para corregirla, pedile a la supervisora o al dueño que entre con su código.`
+            : `Ya se cargó la apertura de este turno (${responsableOriginal}). Podés corregirla — dejá el motivo abajo.`}
+        </div>
+      )}
+      {!yaCargada && sugeridoDeAnterior && (
+        <div className="mx-4 mt-4 p-3 rounded-xl" style={{ background: "#FDECC8", fontSize: 12.5, color: C.inkSoft }}>
+          Precargamos lo que sobró en el turno anterior. Revisalo y corregilo si hace falta antes de guardar.
         </div>
       )}
       <div className="p-4 flex flex-col gap-2">
         <Field label="¿Quién carga?"><Select value={responsable} onChange={setResponsable} options={opcionesResponsable.map((n) => ({ value: n, label: n }))} /></Field>
-        <div style={{ fontSize: 12, color: C.inkSoft, marginBottom: 4 }}>Contá lo que realmente llegó / hay disponible para vender hoy, producto por producto.</div>
+        <div style={{ fontSize: 12, color: C.inkSoft, marginBottom: 4 }}>Contá lo que realmente hay disponible para vender en este turno, producto por producto.</div>
         {catalogo.map((p) => (
           <div key={p.id} className="flex items-center justify-between gap-2 rounded-xl p-3" style={{ background: C.white, border: `1px solid ${C.line}`, opacity: bloqueado ? 0.5 : 1 }}>
             <div className="min-w-0 flex-1">
@@ -1724,32 +1754,34 @@ function BufetApertura({ bufetId, catalogo, personal, nivel, onBack }) {
 }
 
 // ---- Stock Actual (solo lectura, sin edición para evitar manipulación) ----
-function BufetStockActual({ bufetId, catalogo, onBack }) {
+function BufetStockActual({ bufetId, catalogo, turno, onBack }) {
   const [loading, setLoading] = useState(true);
   const [aperturaStock, setAperturaStock] = useState(null);
   const [aperturaHora, setAperturaHora] = useState("");
   const [reposiciones, setReposiciones] = useState([]);
   const fecha = todayKey();
+  const turnoLabel = TURNOS.find((t) => t.id === turno)?.label || "";
 
   useEffect(() => {
     (async () => {
-      const aRaw = await safeGet(`bufet-apertura-${bufetId}-${fecha}`);
+      setLoading(true);
+      const aRaw = await safeGet(`bufet-apertura-${bufetId}-${fecha}-${turno}`);
       if (aRaw) { const data = JSON.parse(aRaw); setAperturaStock(data.stock || {}); setAperturaHora(data.hora || ""); } else setAperturaStock(null);
-      const rList = await safeListPrefix(`bufet-reposicion-${bufetId}-${fecha}-`);
+      const rList = await safeListPrefix(`bufet-reposicion-${bufetId}-${fecha}-${turno}-`);
       setReposiciones(rList.map((r) => r.value));
       setLoading(false);
     })();
-  }, [bufetId]);
+  }, [bufetId, turno]);
 
   if (loading) return <div style={{ background: C.paper, minHeight: "100vh" }} className="flex items-center justify-center"><Loader2 className="animate-spin" color={C.inkSoft} /></div>;
 
   if (aperturaStock === null) {
     return (
       <div>
-        <Header title="Stock Actual" onBack={onBack} />
+        <Header title="Stock Actual" subtitle={turnoLabel} onBack={onBack} />
         <div className="p-6 flex flex-col items-center gap-3 text-center">
           <ShieldAlert size={28} color={C.red} />
-          <div style={{ color: C.red, fontSize: 14 }}>Todavía no se cargó la Apertura de hoy. El stock actual se calcula a partir de ahí.</div>
+          <div style={{ color: C.red, fontSize: 14 }}>Todavía no se cargó la Apertura de este turno. El stock actual se calcula a partir de ahí.</div>
         </div>
       </div>
     );
@@ -1757,7 +1789,7 @@ function BufetStockActual({ bufetId, catalogo, onBack }) {
 
   return (
     <div>
-      <Header title="Stock Actual" subtitle={`Apertura cargada a las ${aperturaHora}`} onBack={onBack} />
+      <Header title="Stock Actual" subtitle={`${turnoLabel} · apertura cargada a las ${aperturaHora}`} onBack={onBack} />
       <div className="mx-4 mt-4 p-3 rounded-xl" style={{ background: C.paperDark, fontSize: 12, color: C.inkSoft }}>
         Esto es solo para consultar — no se puede editar acá. Es apertura + reposiciones, sin restar nada todavía (las ventas se calculan recién en el Cierre).
       </div>
@@ -1781,7 +1813,7 @@ function BufetStockActual({ bufetId, catalogo, onBack }) {
 }
 
 // ---- Reposición ----
-function BufetReposicion({ bufetId, catalogo, personal, onBack }) {
+function BufetReposicion({ bufetId, catalogo, personal, turno, onBack }) {
   const [productoId, setProductoId] = useState(catalogo[0]?.id || "");
   const [cantidad, setCantidad] = useState(1);
   const [entradas, setEntradas] = useState([]);
@@ -1789,21 +1821,23 @@ function BufetReposicion({ bufetId, catalogo, personal, onBack }) {
   const opcionesResponsable = [...personal.map((p) => p.nombre), "Supervisora"];
   const [responsable, setResponsable] = useState(opcionesResponsable[0] || "");
   const fecha = todayKey();
+  const turnoLabel = TURNOS.find((t) => t.id === turno)?.label || "";
 
   async function cargar() {
-    const list = await safeListPrefix(`bufet-reposicion-${bufetId}-${fecha}-`);
+    setLoading(true);
+    const list = await safeListPrefix(`bufet-reposicion-${bufetId}-${fecha}-${turno}-`);
     setEntradas(list.map((r) => r.value).sort((a, b) => (a.hora < b.hora ? 1 : -1)));
     setLoading(false);
   }
-  useEffect(() => { cargar(); }, [bufetId]);
+  useEffect(() => { cargar(); }, [bufetId, turno]);
 
   async function guardar() {
     if (!productoId || !cantidad || cantidad <= 0) return;
     const producto = catalogo.find((p) => p.id === productoId);
     const id = Date.now().toString();
     const entry = { id, productoId, productoNombre: producto?.nombre || "", cantidad: Number(cantidad), hora: horaAhora(), responsable };
-    await safeSet(`bufet-reposicion-${bufetId}-${fecha}-${id}`, JSON.stringify(entry));
-    await registrarAuditoriaBufet(bufetId, fecha, responsable, "Agregó reposición", `${producto?.nombre || ""}: ${cantidad}`);
+    await safeSet(`bufet-reposicion-${bufetId}-${fecha}-${turno}-${id}`, JSON.stringify(entry));
+    await registrarAuditoriaBufet(bufetId, fecha, responsable, "Agregó reposición", `Turno ${turnoLabel}. ${producto?.nombre || ""}: ${cantidad}`);
     setCantidad(1);
     cargar();
   }
@@ -1813,7 +1847,7 @@ function BufetReposicion({ bufetId, catalogo, personal, onBack }) {
 
   return (
     <div>
-      <Header title="Reposición" subtitle="Stock que se suma durante el día" onBack={onBack} />
+      <Header title="Reposición" subtitle={`${turnoLabel} · stock que se suma durante el turno`} onBack={onBack} />
       <div className="p-4 flex flex-col gap-4">
         <Field label="¿Quién repone?"><Select value={responsable} onChange={setResponsable} options={opcionesResponsable.map((n) => ({ value: n, label: n }))} /></Field>
         <Field label="Producto"><Select value={productoId} onChange={setProductoId} options={catalogo.map((p) => ({ value: p.id, label: p.nombre }))} /></Field>
@@ -1821,8 +1855,8 @@ function BufetReposicion({ bufetId, catalogo, personal, onBack }) {
         <button onClick={guardar} className="w-full rounded-xl py-4 display-font flex items-center justify-center gap-2" style={{ background: C.amber, color: C.white, fontSize: 20 }}><Check size={20} /> Agregar</button>
       </div>
       <div className="px-4 pb-8">
-        <SectionLabel>Repuesto hoy</SectionLabel>
-        {entradas.length === 0 ? <EmptyNote text="Todavía no se repuso nada hoy." /> : (
+        <SectionLabel>Repuesto en este turno</SectionLabel>
+        {entradas.length === 0 ? <EmptyNote text="Todavía no se repuso nada en este turno." /> : (
           <div className="flex flex-col gap-2">
             {entradas.map((e) => (
               <div key={e.id} className="flex items-center justify-between rounded-xl p-3" style={{ background: C.white, border: `1px solid ${C.line}` }}>
@@ -1869,7 +1903,7 @@ function calcularCierre(catalogo, aperturaStock, reposiciones, sobrante, consumo
   return { detalle, recaudacionBruta: round2(recaudacionBruta), recaudacionEsperada, cajaReal, diferencia, deudaPorPersona, perdidasTotalPesos };
 }
 
-function BufetCierre({ bufetId, catalogo, personal, nivel, onPersonalActualizado, onBack }) {
+function BufetCierre({ bufetId, catalogo, personal, nivel, turno, onPersonalActualizado, onBack }) {
   const [loading, setLoading] = useState(true);
   const [aperturaStock, setAperturaStock] = useState(null);
   const [reposiciones, setReposiciones] = useState([]);
@@ -1898,26 +1932,31 @@ function BufetCierre({ bufetId, catalogo, personal, nivel, onPersonalActualizado
   const [lMonto, setLMonto] = useState("");
 
   const fecha = todayKey();
+  const turnoLabel = TURNOS.find((t) => t.id === turno)?.label || "";
 
   useEffect(() => {
     (async () => {
-      const aRaw = await safeGet(`bufet-apertura-${bufetId}-${fecha}`);
+      setLoading(true);
+      const aRaw = await safeGet(`bufet-apertura-${bufetId}-${fecha}-${turno}`);
       setAperturaStock(aRaw ? JSON.parse(aRaw).stock : null);
-      const rList = await safeListPrefix(`bufet-reposicion-${bufetId}-${fecha}-`);
+      const rList = await safeListPrefix(`bufet-reposicion-${bufetId}-${fecha}-${turno}-`);
       setReposiciones(rList.map((r) => r.value));
-      const cRaw = await safeGet(`bufet-cierre-${bufetId}-${fecha}`);
+      const cRaw = await safeGet(`bufet-cierre-${bufetId}-${fecha}-${turno}`);
       if (cRaw) {
         const data = JSON.parse(cRaw);
         setSobrante(data.sobrante || {}); setConsumoPersonal(data.consumoPersonal || []); setPerdidas(data.perdidas || []);
         setPagos(data.pagos || { efectivo: "", transferencia: "", qr: "", tarjeta: "" }); setFiado(String(data.fiado || ""));
         setYaCerrado(true); setResponsableOriginal(data.responsable || ""); setDeudaOriginal(data.deudaPorPersona || {});
+      } else {
+        setSobrante({}); setConsumoPersonal([]); setPerdidas([]); setPagos({ efectivo: "", transferencia: "", qr: "", tarjeta: "" }); setFiado("");
+        setYaCerrado(false); setResponsableOriginal(""); setDeudaOriginal({});
       }
       setLoading(false);
     })();
-  }, [bufetId]);
+  }, [bufetId, turno]);
 
-  const bloqueado = yaCerrado && nivel !== "supervisor";
-  const esCorreccion = yaCerrado && nivel === "supervisor";
+  const bloqueado = yaCerrado && nivel === "staff";
+  const esCorreccion = yaCerrado && (nivel === "supervisor" || nivel === "dueno");
 
   function agregarConsumo() {
     if (bloqueado || !cPersonaId || !cProductoId || !cCantidad) return;
@@ -1945,10 +1984,10 @@ function BufetCierre({ bufetId, catalogo, personal, nivel, onPersonalActualizado
     if (bloqueaPorFaltantes) return;
     setGuardando(true);
     const payload = { sobrante, consumoPersonal, perdidas, pagos, fiado: Number(fiado) || 0, ...resumen, hora: horaAhora(), cerrado: true, responsable };
-    const ok = await safeSet(`bufet-cierre-${bufetId}-${fecha}`, JSON.stringify(payload));
+    const ok = await safeSet(`bufet-cierre-${bufetId}-${fecha}-${turno}`, JSON.stringify(payload));
     if (ok) {
       await registrarAuditoriaBufet(bufetId, fecha, responsable, esCorreccion ? "Corrigió cierre" : "Confirmó cierre",
-        esCorreccion ? `Motivo: ${motivoCorreccion.trim()}` : `Diferencia de caja: ${money(resumen.diferencia)}`);
+        esCorreccion ? `Turno ${turnoLabel}. Motivo: ${motivoCorreccion.trim()}` : `Turno ${turnoLabel}. Diferencia de caja: ${money(resumen.diferencia)}`);
       // Aplica al acumulado de cada persona solo la DIFERENCIA contra lo que ya estaba sumado (evita duplicar si se corrige un cierre)
       const nombres = new Set([...Object.keys(resumen.deudaPorPersona), ...Object.keys(deudaOriginal)]);
       if (nombres.size > 0) {
@@ -1974,10 +2013,10 @@ function BufetCierre({ bufetId, catalogo, personal, nivel, onPersonalActualizado
   if (aperturaStock === null) {
     return (
       <div>
-        <Header title="Cierre del Día" onBack={onBack} />
+        <Header title="Cierre del Día" subtitle={turnoLabel} onBack={onBack} />
         <div className="p-6 flex flex-col items-center gap-3 text-center">
           <ShieldAlert size={28} color={C.red} />
-          <div style={{ color: C.red, fontSize: 14 }}>Todavía no se cargó la Apertura de hoy. Hacé la Apertura primero — sin eso, el sistema no puede calcular la diferencia de caja.</div>
+          <div style={{ color: C.red, fontSize: 14 }}>Todavía no se cargó la Apertura de este turno. Hacé la Apertura primero — sin eso, el sistema no puede calcular la diferencia de caja.</div>
         </div>
       </div>
     );
@@ -1986,10 +2025,10 @@ function BufetCierre({ bufetId, catalogo, personal, nivel, onPersonalActualizado
   if (bloqueado) {
     return (
       <div>
-        <Header title="Cierre del Día" subtitle={formatFecha(fecha)} onBack={onBack} />
+        <Header title="Cierre del Día" subtitle={`${formatFecha(fecha)} · ${turnoLabel}`} onBack={onBack} />
         <div className="mx-4 mt-4 p-3 rounded-xl flex items-start gap-2" style={{ background: "#F5E4E2", border: `1px solid ${C.red}` }}>
           <Lock size={18} color={C.red} className="flex-shrink-0 mt-0.5" />
-          <div style={{ fontSize: 12.5, color: C.red }}>El cierre de hoy ya fue confirmado por <strong>{responsableOriginal}</strong>. Si hace falta corregir algo, pedile a la supervisora que entre con su código.</div>
+          <div style={{ fontSize: 12.5, color: C.red }}>El cierre de este turno ya fue confirmado por <strong>{responsableOriginal}</strong>. Si hace falta corregir algo, pedile a la supervisora o al dueño que entre con su código.</div>
         </div>
         <div className="p-4">
           <div className="rounded-2xl p-4" style={{ background: C.ink, color: C.white }}>
@@ -2004,7 +2043,7 @@ function BufetCierre({ bufetId, catalogo, personal, nivel, onPersonalActualizado
 
   return (
     <div>
-      <Header title="Cierre del Día" subtitle={formatFecha(fecha)} onBack={onBack} />
+      <Header title="Cierre del Día" subtitle={`${formatFecha(fecha)} · ${turnoLabel}`} onBack={onBack} />
       {guardado && (
         <div className="mx-4 mt-4 p-3 rounded-xl text-center" style={{ background: "#E3EFE8", border: `1px solid ${C.green}`, fontSize: 13, color: C.tealDark, fontWeight: 700 }}>✓ Cierre guardado.</div>
       )}
@@ -2150,22 +2189,38 @@ function BufetCierre({ bufetId, catalogo, personal, nivel, onPersonalActualizado
 }
 
 // ---- Historial ----
-function BufetHistorial({ bufetId, catalogo, onBack }) {
+function BufetHistorial({ bufetId, catalogo, nivel, onBack }) {
   const [fecha, setFecha] = useState(todayKey());
+  const [turno, setTurno] = useState("manana");
   const [cierre, setCierre] = useState(null);
   const [auditoria, setAuditoria] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [confirmandoBorrado, setConfirmandoBorrado] = useState(false);
+  const [borrando, setBorrando] = useState(false);
+  const [quienBorra, setQuienBorra] = useState(DUENO_NOMBRES[0]);
+  const turnoLabel = TURNOS.find((t) => t.id === turno)?.label || "";
 
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-      const raw = await safeGet(`bufet-cierre-${bufetId}-${fecha}`);
-      setCierre(raw ? JSON.parse(raw) : null);
-      const list = await safeListPrefix(`bufet-auditoria-${bufetId}-${fecha}-`);
-      setAuditoria(list.map((r) => r.value).sort((a, b) => (a.hora < b.hora ? 1 : -1)));
-      setLoading(false);
-    })();
-  }, [bufetId, fecha]);
+  async function cargar() {
+    setLoading(true);
+    const raw = await safeGet(`bufet-cierre-${bufetId}-${fecha}-${turno}`);
+    setCierre(raw ? JSON.parse(raw) : null);
+    const list = await safeListPrefix(`bufet-auditoria-${bufetId}-${fecha}-`);
+    setAuditoria(list.map((r) => r.value).filter((it) => !it.detalle || it.detalle.includes(`Turno ${turnoLabel}`) || !it.detalle.startsWith("Turno")).sort((a, b) => (a.hora < b.hora ? 1 : -1)));
+    setLoading(false);
+  }
+  useEffect(() => { cargar(); }, [bufetId, fecha, turno]);
+
+  async function borrarDiaCompleto() {
+    setBorrando(true);
+    await registrarAuditoriaBufet(bufetId, fecha, quienBorra, "Borró el turno completo", `Turno ${turnoLabel}: se eliminó apertura, cierre y reposiciones.`);
+    await safeDelete(`bufet-apertura-${bufetId}-${fecha}-${turno}`);
+    await safeDelete(`bufet-cierre-${bufetId}-${fecha}-${turno}`);
+    const rList = await safeListPrefix(`bufet-reposicion-${bufetId}-${fecha}-${turno}-`);
+    for (const r of rList) await safeDelete(r.key);
+    setBorrando(false);
+    setConfirmandoBorrado(false);
+    cargar();
+  }
 
   return (
     <div>
@@ -2175,19 +2230,26 @@ function BufetHistorial({ bufetId, catalogo, onBack }) {
         <div className="text-center"><div style={{ fontSize: 14, fontWeight: 600, textTransform: "capitalize" }}>{formatFecha(fecha)}</div></div>
         <button onClick={() => setFecha(addDays(fecha, 1))} disabled={fecha >= todayKey()} className="p-2 rounded-full" style={{ background: C.paperDark, opacity: fecha >= todayKey() ? 0.4 : 1 }}><ChevronRight size={18} /></button>
       </div>
+      <div className="px-4 pt-3 flex gap-2">
+        {TURNOS.map((t) => (
+          <button key={t.id} onClick={() => setTurno(t.id)} className="flex-1 rounded-lg py-2" style={{ background: turno === t.id ? C.ink : C.paperDark, color: turno === t.id ? C.white : C.inkSoft, fontSize: 13, fontWeight: 600 }}>
+            {t.label}
+          </button>
+        ))}
+      </div>
       {loading ? (
         <div className="p-8 flex justify-center"><Loader2 className="animate-spin" color={C.inkSoft} /></div>
       ) : (
         <div className="p-4 flex flex-col gap-5">
           {!cierre ? (
-            <EmptyNote text="No hay cierre cargado para este día." />
+            <EmptyNote text="No hay cierre cargado para este turno." />
           ) : (
             <>
               <div className="rounded-2xl p-4" style={{ background: C.ink, color: C.white }}>
                 <div className="flex justify-between mt-1" style={{ fontSize: 13 }}><span>Recaudación esperada</span><span className="ticket-num">{money(cierre.recaudacionEsperada)}</span></div>
                 <div className="flex justify-between mt-1" style={{ fontSize: 13 }}><span>Caja real</span><span className="ticket-num">{money(cierre.cajaReal)}</span></div>
                 <div className="flex justify-between mt-1" style={{ fontSize: 18, fontWeight: 700 }}><span>Diferencia</span><span className="ticket-num" style={{ color: cierre.diferencia < 0 ? C.red : C.green }}>{money(cierre.diferencia)}</span></div>
-                <div className="flex justify-between mt-3 pt-2" style={{ fontSize: 12, opacity: 0.8, borderTop: "1px dashed rgba(255,255,255,0.3)" }}><span>Pérdidas del día</span><span className="ticket-num">{money(cierre.perdidasTotalPesos)}</span></div>
+                <div className="flex justify-between mt-3 pt-2" style={{ fontSize: 12, opacity: 0.8, borderTop: "1px dashed rgba(255,255,255,0.3)" }}><span>Pérdidas del turno</span><span className="ticket-num">{money(cierre.perdidasTotalPesos)}</span></div>
                 <div className="flex justify-between" style={{ fontSize: 12, opacity: 0.8 }}><span>Fiado</span><span className="ticket-num">{money(cierre.fiado)}</span></div>
               </div>
               <div>
@@ -2220,6 +2282,26 @@ function BufetHistorial({ bufetId, catalogo, onBack }) {
               </div>
             )}
           </div>
+
+          {nivel === "dueno" && (
+            <div className="rounded-xl p-3 flex flex-col gap-3" style={{ background: "#F5E4E2", border: `1px solid ${C.red}` }}>
+              <div style={{ fontSize: 12.5, color: C.red, fontWeight: 700 }}>Zona exclusiva del dueño</div>
+              <div style={{ fontSize: 12, color: C.red }}>Borra apertura, cierre y reposiciones de {formatFecha(fecha)} · {turnoLabel}. No se puede deshacer — solo queda el registro en el historial de cambios.</div>
+              {!confirmandoBorrado ? (
+                <button onClick={() => setConfirmandoBorrado(true)} className="rounded-lg py-2.5 flex items-center justify-center gap-1" style={{ background: C.red, color: C.white, fontWeight: 700, fontSize: 13 }}><Trash2 size={15} /> Borrar este turno completo</button>
+              ) : (
+                <>
+                  <Field label="¿Quién borra?"><Select value={quienBorra} onChange={setQuienBorra} options={DUENO_NOMBRES.map((n) => ({ value: n, label: n }))} /></Field>
+                  <div className="flex gap-2">
+                    <button onClick={() => setConfirmandoBorrado(false)} className="flex-1 rounded-lg py-2.5" style={{ background: C.paperDark, color: C.ink, fontSize: 13, fontWeight: 600 }}>Cancelar</button>
+                    <button onClick={borrarDiaCompleto} disabled={borrando} className="flex-1 rounded-lg py-2.5 flex items-center justify-center gap-1" style={{ background: C.red, color: C.white, fontSize: 13, fontWeight: 700 }}>
+                      {borrando ? <Loader2 className="animate-spin" size={15} /> : <Trash2 size={15} />} Sí, borrar todo
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -2227,7 +2309,7 @@ function BufetHistorial({ bufetId, catalogo, onBack }) {
 }
 
 // ---- Configuración de Bufet (supervisor) ----
-function BufetConfig({ catalogo, personal, accesos, onGuardarCatalogo, onGuardarPersonal, onGuardarAccesos, onBack }) {
+function BufetConfig({ catalogo, personal, accesos, nivel, onGuardarCatalogo, onGuardarPersonal, onGuardarAccesos, onBack }) {
   const [tab, setTab] = useState("catalogo");
   const [nombre, setNombre] = useState("");
   const [tipo, setTipo] = useState("comida");
@@ -2236,6 +2318,7 @@ function BufetConfig({ catalogo, personal, accesos, onGuardarCatalogo, onGuardar
   const [precioHora, setPrecioHora] = useState("");
   const [codStaff, setCodStaff] = useState(accesos?.staff || "");
   const [codSuper, setCodSuper] = useState(accesos?.supervisor || "");
+  const [codDueno, setCodDueno] = useState(accesos?.dueno || "");
 
   function agregarProducto() {
     if (!nombre.trim()) return;
@@ -2315,7 +2398,10 @@ function BufetConfig({ catalogo, personal, accesos, onGuardarCatalogo, onGuardar
             </div>
             <Field label="Código de Personal"><input value={codStaff} onChange={(e) => setCodStaff(e.target.value.replace(/\D/g, ""))} maxLength={6} className="w-full rounded-lg px-3 py-2 ticket-num" style={{ border: `1px solid ${C.line}`, fontSize: 18, letterSpacing: "0.2em" }} /></Field>
             <Field label="Código de Supervisora"><input value={codSuper} onChange={(e) => setCodSuper(e.target.value.replace(/\D/g, ""))} maxLength={6} className="w-full rounded-lg px-3 py-2 ticket-num" style={{ border: `1px solid ${C.line}`, fontSize: 18, letterSpacing: "0.2em" }} /></Field>
-            <button onClick={() => onGuardarAccesos({ staff: codStaff, supervisor: codSuper })} className="rounded-lg py-2.5 flex items-center justify-center gap-1" style={{ background: C.teal, color: C.white, fontWeight: 600, fontSize: 14 }}><Save size={16} /> Guardar códigos</button>
+            {nivel === "dueno" && (
+              <Field label="Código de Dueño (exclusivo, no lo comparte la supervisora)"><input value={codDueno} onChange={(e) => setCodDueno(e.target.value.replace(/\D/g, ""))} maxLength={6} className="w-full rounded-lg px-3 py-2 ticket-num" style={{ border: `1px solid ${C.line}`, fontSize: 18, letterSpacing: "0.2em" }} /></Field>
+            )}
+            <button onClick={() => onGuardarAccesos({ staff: codStaff, supervisor: codSuper, dueno: nivel === "dueno" ? codDueno : accesos?.dueno })} className="rounded-lg py-2.5 flex items-center justify-center gap-1" style={{ background: C.teal, color: C.white, fontWeight: 600, fontSize: 14 }}><Save size={16} /> Guardar códigos</button>
           </div>
         )}
       </div>
